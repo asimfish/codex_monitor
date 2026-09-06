@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "codex-monitor"
+version = "1.0.0"
+description = "Quota dashboard and multi-account manager for OpenAI Codex (macOS, Linux, Windows; stdlib only)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "asimfish"}]
+keywords = ["codex", "openai", "quota", "rate-limit", "multi-account"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "License :: OSI Approved :: MIT License",
+  "Environment :: Console",
+  "Environment :: Web Environment",
+]
+
+[project.urls]
+Homepage = "https://github.com/asimfish/codex_monitor"
+
+[project.scripts]
+codex-monitor = "codex_monitor.cli:main"
+codex-acct = "codex_monitor.cli:main"
+
+[tool.setuptools]
+packages = ["codex_monitor"]

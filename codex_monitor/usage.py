@@ -1,0 +1,388 @@
+"""Quota data: the read-only usage endpoints Codex itself uses, plus the real-time
+`token_count` events Codex appends to its session rollouts."""
+from __future__ import annotations
+
+import json
+import os
+import re
+import urllib.error
+import urllib.request
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from . import net, paths
+from .identity import (access_token_expired, epoch, fmt_countdown, fmt_local, fmt_percent, identity,
+                       now_utc, parse_iso, plan_label, window_label)
+
+
+class UsageError(Exception):
+    def __init__(self, message: str, status: int = 0):
+        super().__init__(message)
+        self.status = status
+
+
+def _get(path: str, token: str, account_id: str, timeout: float = 20) -> dict:
+    req = urllib.request.Request(paths.base_url() + path, headers={
+        "Authorization": f"Bearer {token}",
+        "ChatGPT-Account-Id": account_id,
+        "User-Agent": paths.USER_AGENT,
+        "Accept": "application/json",
+        "originator": "codex_cli_rs",
+    })
+    try:
+        with net.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read()[:300].decode("utf-8", "replace")
+        if e.code == 401:
+            raise UsageError(f"token rejected (401): {body}", 401) from e
+        raise UsageError(f"HTTP {e.code}: {body}", e.code) from e
+    except (urllib.error.URLError, OSError) as e:
+        raise UsageError(f"network error: {e}") from e
+
+
+def fetch_usage(auth: dict) -> dict:
+    """GET /wham/usage. Raises UsageError."""
+    tokens = auth.get("tokens") or {}
+    token = tokens.get("access_token")
+    if not token:
+        raise UsageError("no access_token (API-key mode?)")
+    ident = identity(auth)
+    if access_token_expired(ident):
+        raise UsageError(f"access token expired at {fmt_local(ident['access_expires'])}; refresh or re-login", 401)
+    return _get("/wham/usage", token, ident["account_id"])
+
+
+def fetch_reset_credits(auth: dict) -> Optional[dict]:
+    tokens = auth.get("tokens") or {}
+    token = tokens.get("access_token")
+    if not token:
+        return None
+    try:
+        return _get("/wham/rate-limit-reset-credits", token, identity(auth)["account_id"])
+    except UsageError:
+        return None
+
+
+# ---------------------------------------------------------------- windows / views
+
+def _window_view(w: Optional[dict], now: datetime) -> Optional[dict]:
+    if not w or w.get("used_percent") is None:
+        return None
+    used = float(w["used_percent"])
+    remaining = max(0.0, min(100.0, 100.0 - used))
+    secs = w.get("limit_window_seconds")
+    if secs is None and w.get("window_minutes") is not None:
+        secs = int(w["window_minutes"]) * 60
+    reset_at = epoch(w["reset_at"]) if w.get("reset_at") is not None else (epoch(w["resets_at"]) if w.get("resets_at") is not None else None)
+    return {
+        "label": window_label(secs),
+        "window_seconds": secs,
+        "used_percent": used,
+        "remaining_percent": remaining,
+        "reset_at": reset_at,
+        "reset_in": fmt_countdown(reset_at, now) if reset_at else "",
+    }
+
+
+def windows_of(rate_limit: Optional[dict], now: datetime) -> List[dict]:
+    if not rate_limit:
+        return []
+    ws = [_window_view(rate_limit.get("primary_window") or rate_limit.get("primary"), now),
+          _window_view(rate_limit.get("secondary_window") or rate_limit.get("secondary"), now)]
+    ws = [w for w in ws if w]
+    return sorted(ws, key=lambda w: w["window_seconds"] or 0)
+
+
+def reached_detail(v: Any) -> Optional[str]:
+    """rate_limit_reached_type is a string in some responses and {type, details} in others."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        return None if v == "rate_limit_reached" else v
+    if isinstance(v, dict):
+        t = v.get("type")
+        if t and t != "rate_limit_reached":
+            return str(t)
+        d = v.get("details")
+        return None if d in (None, "default") else str(d)
+    return None
+
+
+@dataclass
+class LiveEvent:
+    timestamp: datetime
+    limit_id: Optional[str]
+    limit_name: Optional[str]
+    primary: Optional[dict]
+    secondary: Optional[dict]
+    plan_type: Optional[str]
+    limit_reached: bool
+
+    @property
+    def is_main(self) -> bool:
+        return self.limit_id in (None, "codex")
+
+    def as_rate_limit(self) -> dict:
+        return {"allowed": not self.limit_reached, "limit_reached": self.limit_reached,
+                "primary_window": self.primary, "secondary_window": self.secondary}
+
+
+_TOKEN_COUNT = re.compile(rb'"token_count"')
+
+
+def parse_rollout_line(line: bytes) -> Optional[LiveEvent]:
+    if b'"rate_limits"' not in line or not _TOKEN_COUNT.search(line):
+        return None
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        return None
+    payload = obj.get("payload") if isinstance(obj, dict) else None
+    if not isinstance(payload, dict) or payload.get("type") != "token_count":
+        return None
+    rl = payload.get("rate_limits")
+    ts = parse_iso(obj.get("timestamp"))
+    if not isinstance(rl, dict) or not ts:
+        return None
+
+    def window(w: Any) -> Optional[dict]:
+        if not isinstance(w, dict) or w.get("used_percent") is None:
+            return None
+        minutes = w.get("window_minutes")
+        resets = w.get("resets_at")
+        return {
+            "used_percent": float(w["used_percent"]),
+            "limit_window_seconds": int(minutes) * 60 if minutes is not None else None,
+            "reset_at": resets,
+        }
+
+    primary, secondary = window(rl.get("primary")), window(rl.get("secondary"))
+    if primary is None and secondary is None:
+        return None
+    return LiveEvent(timestamp=ts, limit_id=rl.get("limit_id"), limit_name=rl.get("limit_name"),
+                     primary=primary, secondary=secondary, plan_type=rl.get("plan_type"),
+                     limit_reached=rl.get("rate_limit_reached_type") is not None)
+
+
+class RolloutTailer:
+    """Incrementally reads bytes appended to recently modified rollout files under one
+    `sessions` directory. Cheap enough to run every couple of seconds."""
+
+    def __init__(self, sessions_dir: Path, recent_window: float = 15 * 60, initial_tail_bytes: int = 512 * 1024):
+        self.sessions_dir = Path(sessions_dir)
+        self.recent_window = recent_window
+        self.initial_tail_bytes = initial_tail_bytes
+        self._offsets: Dict[str, int] = {}
+        self._partial: Dict[str, bytes] = {}
+
+    def _recent_files(self, now: datetime) -> List[Path]:
+        dirs = set()
+        local_now = now.astimezone()
+        for day_offset in (0, 1):
+            d = local_now - timedelta(days=day_offset)
+            dirs.add(self.sessions_dir / f"{d.year:04d}" / f"{d.month:02d}" / f"{d.day:02d}")
+        u = now.astimezone(timezone.utc)
+        dirs.add(self.sessions_dir / f"{u.year:04d}" / f"{u.month:02d}" / f"{u.day:02d}")
+        out: List[Path] = []
+        cutoff = now.timestamp() - self.recent_window
+        for d in dirs:
+            try:
+                for f in d.iterdir():
+                    if f.suffix == ".jsonl" and f.stat().st_mtime >= cutoff:
+                        out.append(f)
+            except OSError:
+                continue
+        return out
+
+    def poll(self, now: Optional[datetime] = None) -> List[LiveEvent]:
+        now = now or now_utc()
+        events: List[LiveEvent] = []
+        for f in self._recent_files(now):
+            key = str(f)
+            try:
+                size = f.stat().st_size
+            except OSError:
+                continue
+            offset = self._offsets.get(key)
+            if offset is None:
+                offset = size - self.initial_tail_bytes if size > self.initial_tail_bytes else 0
+            elif offset > size:
+                offset = 0
+            if size <= offset:
+                self._offsets[key] = size
+                continue
+            try:
+                with open(f, "rb") as fh:
+                    fh.seek(offset)
+                    data = fh.read(min(size - offset, 8 * 1024 * 1024))
+            except OSError:
+                continue
+            self._offsets[key] = offset + len(data)
+            buf = self._partial.get(key, b"") + data
+            lines = buf.split(b"\n")
+            self._partial[key] = lines.pop()
+            for line in lines:
+                ev = parse_rollout_line(line)
+                if ev:
+                    events.append(ev)
+        return events
+
+    def poll_latest(self, now: Optional[datetime] = None) -> Tuple[Optional[LiveEvent], Dict[str, LiveEvent]]:
+        main: Optional[LiveEvent] = None
+        extras: Dict[str, LiveEvent] = {}
+        for ev in self.poll(now):
+            if ev.is_main:
+                if main is None or ev.timestamp > main.timestamp:
+                    main = ev
+            elif ev.limit_id:
+                prev = extras.get(ev.limit_id)
+                if prev is None or ev.timestamp > prev.timestamp:
+                    extras[ev.limit_id] = ev
+        return main, extras
+
+
+# ---------------------------------------------------------------- per-account snapshot
+
+@dataclass
+class AccountState:
+    name: str
+    display_name: str
+    active: bool
+    is_main: bool
+    auth_path: str
+    ident: dict
+    usage: Optional[dict] = None
+    credits: Optional[dict] = None
+    fetched_at: Optional[datetime] = None
+    error: Optional[str] = None
+    live: Optional[LiveEvent] = None
+    live_extras: Dict[str, LiveEvent] = field(default_factory=dict)
+
+    def shows_live(self) -> bool:
+        if not self.live:
+            return False
+        if not self.fetched_at:
+            return True
+        if self.live.timestamp > self.fetched_at:
+            return True
+        # The usage endpoint can lag the per-response headers: prefer a recent live event that
+        # reports *more* usage for the same window.
+        if (self.fetched_at - self.live.timestamp).total_seconds() < 120 and self.usage:
+            lp = self.live.primary
+            ap = (self.usage.get("rate_limit") or {}).get("primary_window")
+            if lp and ap and ap.get("reset_at") is not None and lp.get("reset_at") is not None:
+                if abs(float(lp["reset_at"]) - float(ap["reset_at"])) < 60 and lp["used_percent"] > float(ap.get("used_percent", 0)):
+                    return True
+        return False
+
+    def view(self, now: Optional[datetime] = None) -> dict:
+        now = now or now_utc()
+        live = self.shows_live()
+        rate_limit = self.live.as_rate_limit() if live and self.live else (self.usage or {}).get("rate_limit")
+        windows = windows_of(rate_limit, now)
+        extras = []
+        for x in (self.usage or {}).get("additional_rate_limits") or []:
+            rl = x.get("rate_limit")
+            key = x.get("metered_feature")
+            lx = self.live_extras.get(key) if key else None
+            if lx and (not self.fetched_at or lx.timestamp > self.fetched_at):
+                rl = lx.as_rate_limit()
+            extras.append({"name": x.get("limit_name") or key or "other", "windows": windows_of(rl, now)})
+        reset_credits = None
+        if self.credits and self.credits.get("available_count") is not None:
+            reset_credits = self.credits["available_count"]
+        elif self.usage and (self.usage.get("rate_limit_reset_credits") or {}).get("available_count") is not None:
+            reset_credits = self.usage["rate_limit_reset_credits"]["available_count"]
+        earliest = None
+        for c in (self.credits or {}).get("credits") or []:
+            if c.get("status", "available") == "available":
+                e = parse_iso(c.get("expires_at"))
+                if e and (earliest is None or e < earliest):
+                    earliest = e
+        plan = (self.usage or {}).get("plan_type") or (self.live.plan_type if self.live else None) or self.ident.get("plan")
+        tight = min(windows, key=lambda w: w["remaining_percent"]) if windows else None
+        return {
+            "name": self.name,
+            "display_name": self.display_name,
+            "email": self.ident.get("email") or "",
+            "plan": plan or "",
+            "plan_label": plan_label(plan),
+            "active": self.active,
+            "is_main": self.is_main,
+            "auth_path": self.auth_path,
+            "windows": windows,
+            "extras": extras,
+            "limit_reached": bool(rate_limit and (rate_limit.get("limit_reached") or rate_limit.get("allowed") is False)),
+            "limit_reached_detail": reached_detail((self.usage or {}).get("rate_limit_reached_type")) if not live else None,
+            "reset_credits": reset_credits,
+            "reset_credits_earliest_expiry": earliest,
+            "credits_balance": ((self.usage or {}).get("credits") or {}).get("balance") if ((self.usage or {}).get("credits") or {}).get("has_credits") else None,
+            "subscription_until": self.ident.get("subscription_until"),
+            "access_expires": self.ident.get("access_expires"),
+            "access_expired": access_token_expired(self.ident),
+            "last_refresh": self.ident.get("last_refresh"),
+            "has_refresh_token": self.ident.get("has_refresh_token", False),
+            "source": ("live" if live else "api") if (live or self.fetched_at) else None,
+            "source_at": (self.live.timestamp if live and self.live else self.fetched_at),
+            "stale": bool(self.error and self.usage),
+            "error": self.error,
+            "tightest_remaining": tight["remaining_percent"] if tight else None,
+            "now": now,
+        }
+
+
+def format_view(v: dict) -> List[str]:
+    """Human-readable lines for the CLI."""
+    head = ("* " if v["active"] else "  ") + f"{v['name']}  {v['email'] or '?'}  {v['plan_label']}"
+    lines = [head]
+    if v["error"] and not v["windows"]:
+        lines.append(f"    x {v['error']}")
+    for w in v["windows"]:
+        lines.append(f"    {w['label']:<7} {fmt_percent(w['remaining_percent']):>5} left   resets {fmt_local(w['reset_at'])} (in {w['reset_in']})")
+    if v["limit_reached"]:
+        lines.append("    x limit reached" + (f" ({v['limit_reached_detail']})" if v.get("limit_reached_detail") else ""))
+    for x in v["extras"]:
+        parts = [f"{w['label']} {fmt_percent(w['remaining_percent'])} left" for w in x["windows"]]
+        if parts:
+            lines.append(f"    {x['name']}: " + ", ".join(parts))
+    rc = v["reset_credits"]
+    rc_txt = "-" if rc is None else str(rc) + (f" (earliest expiry {fmt_local(v['reset_credits_earliest_expiry'], '%m-%d')})" if v["reset_credits_earliest_expiry"] else "")
+    lines.append(f"    reset credits {rc_txt}" + (f"   credit balance {v['credits_balance']}" if v["credits_balance"] else ""))
+    lines.append(f"    subscription until {fmt_local(v['subscription_until'])}   token valid until {fmt_local(v['access_expires'])}   last refresh {fmt_local(v['last_refresh'], '%Y-%m-%d %H:%M')}")
+    if v["source"]:
+        lines.append(f"    source: {v['source']} @ {fmt_local(v['source_at'], '%H:%M:%S')}" + ("  (stale, showing cached data; " + str(v["error"]) + ")" if v["stale"] else ""))
+    return lines
+
+
+# ---------------------------------------------------------------- cache
+
+def cache_path(account_id: str) -> Path:
+    return paths.cache_dir() / f"usage-{account_id}.json"
+
+
+def save_cache(account_id: str, usage: dict, credits: Optional[dict], fetched_at: datetime) -> None:
+    if not account_id:
+        return
+    try:
+        from .store import atomic_write
+        payload = {"fetchedAt": fetched_at.astimezone(timezone.utc).isoformat(), "usage": usage, "resetCredits": credits}
+        atomic_write(cache_path(account_id), json.dumps(payload, indent=2).encode("utf-8"))
+    except OSError:
+        pass
+
+
+def load_cache(account_id: str) -> Optional[Tuple[dict, Optional[dict], datetime]]:
+    if not account_id:
+        return None
+    try:
+        with open(cache_path(account_id), "r", encoding="utf-8") as f:
+            d = json.load(f)
+        ts = parse_iso(d.get("fetchedAt"))
+        if not ts or not isinstance(d.get("usage"), dict):
+            return None
+        return d["usage"], d.get("resetCredits"), ts
+    except (OSError, ValueError):
+        return None

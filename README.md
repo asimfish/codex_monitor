@@ -1,16 +1,21 @@
 # Codex Monitor 📊
 
-**A floating macOS widget + CLI for OpenAI Codex quota and multi-account management — without opening the Codex app, and without ever touching your tokens unless you ask.**
+**Quota dashboard + multi-account manager for OpenAI Codex — see every account's remaining quota, reset time and reset credits in real time, and add or switch ChatGPT accounts without ever touching your tokens unless you ask.**
+
+Runs everywhere Codex CLI runs: a native floating widget on **macOS**, and a local web dashboard + CLI (Python, standard library only) on **macOS, Linux and Windows**.
 
 <p align="center">
-  <img src="docs/screenshots/panel.png" alt="Codex Monitor panel — every account with remaining quota, reset time, reset credits, subscription and token expiry" width="380">
+  <img src="docs/screenshots/panel.png" alt="macOS widget — every account with remaining quota, reset time, reset credits, subscription and token expiry" width="330">
   &nbsp;&nbsp;
-  <img src="docs/screenshots/strip.png" alt="Collapsed vertical strip" width="46">
+  <img src="docs/screenshots/dashboard.png" alt="Web dashboard (macOS / Linux / Windows)" width="330">
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/strip.png" alt="Collapsed vertical strip" width="40">
 </p>
+<p align="center"><sub>Left: native macOS widget · Middle: web dashboard, identical on every OS · Right: the widget collapsed to a strip</sub></p>
 
-[![macOS 14+](https://img.shields.io/badge/macOS-14%2B-000000?style=flat&logo=apple&logoColor=white)](#3--quick-start) · [![Swift 5 · SwiftUI](https://img.shields.io/badge/Swift-5%20%C2%B7%20SwiftUI-F05138?style=flat&logo=swift&logoColor=white)](Sources/CodexMonitor) · [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B%20%C2%B7%20stdlib%20only-3776AB?style=flat&logo=python&logoColor=white)](bin/codex-acct) · [![Read-only by design](https://img.shields.io/badge/tokens-read--only%20by%20design-2ea44f?style=flat)](#6--how-it-works) · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE) · [🇨🇳 中文说明](README_CN.md)
+[![macOS · Linux · Windows](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-4c8eda?style=flat)](#3--quick-start) · [![macOS 14+ native widget](https://img.shields.io/badge/native%20widget-macOS%2014%2B-000000?style=flat&logo=apple&logoColor=white)](#3--quick-start) · [![Swift 5 · SwiftUI](https://img.shields.io/badge/Swift-5%20%C2%B7%20SwiftUI-F05138?style=flat&logo=swift&logoColor=white)](Sources/CodexMonitor) · [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B%20%C2%B7%20stdlib%20only-3776AB?style=flat&logo=python&logoColor=white)](codex_monitor) · [![Read-only by design](https://img.shields.io/badge/tokens-read--only%20by%20design-2ea44f?style=flat)](#6--how-it-works) · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE) · [🇨🇳 中文说明](README_CN.md)
 
-🈶 *The widget's UI text is currently Chinese; every string lives in [`Sources/CodexMonitor/Strings*.swift`](Sources/CodexMonitor), so an English localisation is a small PR.*
+🈶 *The web dashboard is bilingual (English / 中文, follows your browser). The native macOS widget's text is Chinese; every string lives in [`Sources/CodexMonitor/Strings*.swift`](Sources/CodexMonitor), so an English localisation is a small PR.*
 
 💡 *Codex Monitor reads the same `auth.json` that Codex CLI / the Codex desktop app use, calls the same read-only usage endpoints, and tails the same session logs — so the numbers match what Codex shows, in real time.*
 
@@ -20,7 +25,7 @@
 - [2. ✨ Features](#2--features)
 - [3. 🚀 Quick Start](#3--quick-start)
 - [4. 🧭 Using the widget](#4--using-the-widget)
-- [5. 👥 Multiple accounts — `codex-acct`](#5--multiple-accounts--codex-acct)
+- [5. 👥 Multiple accounts — `codex-monitor` CLI](#5--multiple-accounts--codex-monitor-cli)
 - [6. ⚙️ How it works](#6--how-it-works)
 - [7. 🔐 Security notes](#7--security-notes)
 - [8. 🧪 Development & tests](#8--development--tests)
@@ -39,26 +44,76 @@ Codex Monitor solves all three: a read-only widget that shows every account's qu
 
 ## 2. ✨ Features
 
-**Widget (menu bar + floating panel)**
+**Widget (native macOS) and dashboard (any OS)**
 
 - Per account: email, plan (Pro / Plus / Free / Team …), **remaining quota** for every rate-limit window (5-hour, weekly, 30-day …), **reset time + countdown**, **reset credits** ("Full reset" coupons and their expiry), per-model limits (e.g. GPT-5.3-Codex-Spark), **subscription expiry**, access-token validity, last credential refresh.
 - **Real-time** — the panel tails Codex session rollouts and updates within a second of each model response; the usage API (30 s by default) is the fallback and calibration.
-- **Collapsible**: full panel → the active account as a card and the others as one-line rows (or all expanded) → a 46-px vertical strip pinned to the screen edge.
-- Non-activating floating panel (clicking it never steals focus), draggable, remembers position, three window levels (always on top / normal / pinned to the desktop), starts at login via a LaunchAgent.
+- **Collapsible** (widget): full panel → the active account as a card and the others as one-line rows (or all expanded) → a 46-px vertical strip pinned to the screen edge. Non-activating floating panel (clicking it never steals focus), draggable, remembers position, three window levels, starts at login via a LaunchAgent.
+- **Dashboard** (any OS): the same cards in a local web page, bilingual, `--app` opens it as a chromeless window; starts at login via `codex-monitor autostart install`.
 - One-click **switch** between accounts, **copy / export** any account's `auth.json`, **re-login** an account whose session was revoked.
 
 **Multi-account**
 
 - **Add accounts from the GUI**: an OAuth (authorization code + PKCE) login that opens the authorize page in a *private* browser window, so the account you are already logged into in your browser is never picked by mistake. No ChatGPT setting needs to be enabled.
 - Device-code login as a fallback (for remote / headless use).
-- Every account lives in its own `~/.codex-accounts/<name>/` directory, which doubles as an isolated `CODEX_HOME`. Switching copies one file; `codex-acct run <name>` runs Codex with a different account in parallel without switching at all.
+- Every account lives in its own `~/.codex-accounts/<name>/` directory, which doubles as an isolated `CODEX_HOME`. Switching copies one file; `codex-monitor run <name>` runs Codex with a different account in parallel without switching at all.
 - Refreshed tokens are synced back: when Codex rewrites `~/.codex/auth.json`, the stored copy of that account is updated, so your archive never holds a stale refresh token.
 
-**CLI (`codex-acct`)** — `add`, `import`, `save`, `list`, `status`, `use`, `run`, `env`, `export`, `sync`, `refresh`, `remove`. Python 3, standard library only.
+**Web dashboard + CLI (`codex-monitor`)** — the same panel as a local web page for macOS / Linux / Windows, plus `add`, `relogin`, `import`, `save`, `list`, `status`, `use`, `run`, `env`, `export`, `sync`, `refresh`, `remove`, `serve`, `autostart`. Python 3.8+, standard library only; `codex-acct` is an alias.
 
 ## 3. 🚀 Quick Start
 
-Requirements: macOS 14+, Xcode Command Line Tools (for `swiftc`), [Codex CLI](https://github.com/openai/codex) logged in at least once (or not — the widget will tell you), Python 3.9+.
+Two front-ends share the same account store (`~/.codex-accounts`) and the same logic; pick either or both.
+
+### 3.1 Any OS — web dashboard + CLI (Python 3.8+, no dependencies)
+
+```bash
+# install (pipx keeps it isolated; plain pip works too)
+pipx install git+https://github.com/asimfish/codex_monitor.git
+#   or:  pip install git+https://github.com/asimfish/codex_monitor.git
+#   or, from a clone without installing anything:  python3 bin/codex-monitor ...   (Windows: py bin\codex-monitor ...)
+
+codex-monitor serve            # starts http://127.0.0.1:7860/?token=… and opens it in your browser
+codex-monitor serve --app      # …as a chromeless "app" window (Chrome/Edge), which looks like a widget
+codex-monitor autostart install   # start it at login: LaunchAgent / systemd user unit or XDG autostart / Task Scheduler
+```
+
+The dashboard shows what `~/.codex/auth.json` is logged in as. **Add account** → name it → **Open in … private window** → sign in with the other ChatGPT account → the page redirects to `localhost:1455` and the new account appears. Everything else (switch, copy/export `auth.json`, re-login) is a button on the card.
+
+The same things from the terminal:
+
+```bash
+codex-monitor add work                 # browser login into ~/.codex-accounts/work (opens a private window if a browser is found)
+codex-monitor add work --device        # device-code login instead (see the note in section 5)
+codex-monitor list                     # table: email / plan / token expiry / subscription / which one is active
+codex-monitor status                   # remaining %, reset time, reset credits for every account
+codex-monitor use work                 # make it the active login (writes ~/.codex/auth.json; old one synced/backed up)
+codex-monitor run alt1                 # run codex as another account in this terminal without switching
+codex-monitor export work ~/Desktop/   # copy an auth.json out for another machine
+```
+
+<details>
+<summary><b>Windows notes</b></summary>
+
+- Install Python 3 from python.org or the Microsoft Store and tick *Add to PATH*; then `pip install git+https://github.com/asimfish/codex_monitor.git` gives you `codex-monitor.exe` (or use `py -m codex_monitor …`).
+- Codex CLI's home is `%USERPROFILE%\.codex`, accounts go to `%USERPROFILE%\.codex-accounts` — same layout as on macOS/Linux.
+- Private windows: Chrome (`--incognito`), Edge (`--inprivate`), Brave, Firefox are detected under `Program Files` / `LocalAppData`.
+- `codex-monitor run` shares `config.toml` by copying it (symlinks need Developer Mode on Windows); skill/plugin directories are not shared in that case.
+- `autostart install` creates a Task Scheduler task (`CodexMonitorDashboard`, at logon, `pythonw.exe`, no console window). `autostart remove` deletes it.
+- Keep the dashboard on top with PowerToys *Always On Top* (Win+Ctrl+T) if you want widget behaviour.
+</details>
+
+<details>
+<summary><b>Linux notes</b></summary>
+
+- `autostart install` writes a systemd user service (`~/.config/systemd/user/codex-monitor.service`, enabled and started) or, without systemd, an XDG autostart entry.
+- Private windows: `google-chrome`, `chromium`, `brave`, `microsoft-edge`, `firefox` are looked up on `PATH`.
+- Headless box? `codex-monitor add work --no-open` prints the login URL; open it on any machine with a browser — the redirect goes to `localhost:1455` **on the machine running codex-monitor**, so forward the port (`ssh -L 1455:localhost:1455 box`) or use `--device`.
+</details>
+
+### 3.2 macOS — native floating widget (menu bar + panel)
+
+Requires macOS 14+ and the Xcode Command Line Tools (`xcode-select --install`, provides `swiftc`).
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git
@@ -66,13 +121,18 @@ cd codex_monitor
 ./scripts/install.sh
 ```
 
-`install.sh` compiles `CodexMonitor.app` with the system Swift toolchain (ad-hoc signed, ~1 minute), installs it to `~/Applications`, registers a LaunchAgent so it starts at login, and links the CLI to `~/.local/bin/codex-acct`. Re-run it to upgrade; `./scripts/uninstall.sh` removes everything except your stored accounts.
+`install.sh` compiles `CodexMonitor.app` (ad-hoc signed, about a minute), installs it to `~/Applications`, registers a LaunchAgent so it starts at login, and links the CLI to `~/.local/bin/codex-monitor` / `codex-acct`. Re-run to upgrade; `./scripts/uninstall.sh` removes everything except your stored accounts. The widget appears top-right; adding an account works exactly like in the dashboard (**添加账号** → private window → done).
 
-The panel appears at the top-right of your screen showing whatever `~/.codex/auth.json` is logged in as. To add another account:
+### 3.3 What was verified where
 
-1. Click **添加账号 / Add account** (panel footer or menu-bar menu) and give it a directory name.
-2. Click **Open in Chrome incognito** (or your default browser), sign in with the *other* ChatGPT account.
-3. The browser redirects back to `localhost:1455`; the window turns into **Login succeeded** and the account appears in the panel. Optionally click **Make active**.
+| | macOS 26 (Apple silicon) | Linux (Debian, Docker `python:3.8-slim` / `3.12-slim`) | Windows |
+|---|---|---|---|
+| Python tests (`tests/test_python.py`, `tests/test_cli.py`) | ✅ Python 3.9 | ✅ 3.8 and 3.12 | not run — Windows-only branches are exercised with simulated `os.name == "nt"` in the tests |
+| `pip install .`, `codex-monitor --version`, dashboard boots, `autostart install/remove` | ✅ | ✅ (XDG autostart path; no systemd in containers) | not run |
+| Real accounts: quota API, live rollout events, OAuth browser login | ✅ (5 accounts) | – | – |
+| Native widget | ✅ | – | – |
+
+If you run it on Windows, please open an issue with what you saw — good or bad.
 
 ## 4. 🧭 Using the widget
 
@@ -86,22 +146,24 @@ The panel appears at the top-right of your screen showing whatever `~/.codex/aut
 
 Colours: green > 50 % remaining, orange 20–50 %, red ≤ 20 % or limit reached; yellow dot = showing cached data; grey = not loaded yet.
 
-## 5. 👥 Multiple accounts — `codex-acct`
+## 5. 👥 Multiple accounts — `codex-monitor` CLI
 
-Everything the GUI does is also available from the terminal:
+Everything the GUI does is also available from the terminal (`codex-acct` is an alias of `codex-monitor`):
 
 ```bash
-codex-acct save main             # archive the current ~/.codex login as an account (just a copy)
-codex-acct add work              # device-code login into ~/.codex-accounts/work (see note below)
-codex-acct import old ~/Downloads/auth.json   # bring in an auth.json you already have
-codex-acct list                  # table: email / plan / token expiry / subscription / which one is active
-codex-acct status                # fetch quota for every account: remaining %, reset time, reset credits
-codex-acct use work              # switch: write this account into ~/.codex/auth.json (old one synced/backed up first)
-codex-acct run alt1              # don't switch — run codex with alt1 in this terminal (parallel use)
-eval "$(codex-acct env alt1)"    # same, for every codex call in this shell
-codex-acct export work ~/tmp/    # copy an auth.json out for another machine
-codex-acct sync                  # pull a refreshed ~/.codex/auth.json back into its account directory
-codex-acct refresh work          # (optional, confirmed) explicit token refresh
+codex-monitor save main             # archive the current ~/.codex login as an account (just a copy)
+codex-monitor add work              # browser login into ~/.codex-accounts/work (private window; no ChatGPT setting needed)
+codex-monitor add work --device     # device-code login instead (see note below)
+codex-monitor relogin work          # sign the same account in again when its session was revoked
+codex-monitor import old ~/Downloads/auth.json   # bring in an auth.json you already have
+codex-monitor list                  # table: email / plan / token expiry / subscription / which one is active
+codex-monitor status                # fetch quota for every account: remaining %, reset time, reset credits
+codex-monitor use work              # switch: write this account into ~/.codex/auth.json (old one synced/backed up first)
+codex-monitor run alt1              # don't switch — run codex with alt1 in this terminal (parallel use)
+eval "$(codex-monitor env alt1)"    # same, for every codex call in this shell (PowerShell syntax is printed on Windows)
+codex-monitor export work ~/tmp/    # copy an auth.json out for another machine
+codex-monitor sync                  # pull a refreshed ~/.codex/auth.json back into its account directory
+codex-monitor refresh work          # (optional, confirmed) explicit token refresh
 ```
 
 Layout:
@@ -115,9 +177,9 @@ Layout:
   .cache/usage-<account_id>.json      the widget's last usage snapshot per account
 ```
 
-`codex-acct run` symlinks `config.toml`, `AGENTS.md`, `skills/`, `plugins/`, `agents/` into the account directory, so configuration is shared and only credentials and session history are separate.
+`codex-monitor run` symlinks `config.toml`, `AGENTS.md`, `skills/`, `plugins/`, `agents/` into the account directory, so configuration is shared and only credentials and session history are separate (on Windows `config.toml` is copied instead).
 
-> **Device-code login needs a ChatGPT setting.** `codex login --device-auth` only works after the target account enables *Device code authorization for Codex* under ChatGPT → Settings → Security. The GUI's browser login does not need it — that is why it is the default.
+> **Device-code login needs a ChatGPT setting.** `codex login --device-auth` only works after the target account enables *Device code authorization for Codex* under ChatGPT → Settings → Security. Browser login (the default everywhere — widget, dashboard and CLI) does not need it.
 
 ## 6. ⚙️ How it works
 
@@ -136,6 +198,8 @@ Live events win when they are newer than the last API fetch, or when the API sti
 
 The widget never calls the OAuth refresh endpoint and never writes any `auth.json` on its own. The only writes are user-initiated: *Switch*, *Save as account*, *Refresh token…* (confirmation dialog; the button only appears when a token is expired/rejected), *Re-login…*, and the one-way "adopt" copy that mirrors a `~/.codex/auth.json` Codex itself just refreshed into the matching account directory (no network involved).
 
+**Two implementations, one behaviour.** The Swift widget and the Python package implement the same store layout, the same API calls, the same rollout tailing and the same OAuth flow; both are covered by the tests in `tests/`. Proxies: the Python side honours `HTTPS_PROXY`/`HTTP_PROXY`, the macOS system proxy (`scutil --proxy`) and the Windows registry proxy; the widget uses the system proxy through URLSession.
+
 **Login flow**
 
 Browser mode reproduces Codex CLI's own OAuth client: same `client_id`, `redirect_uri=http://localhost:1455/auth/callback`, `S256` PKCE, form-encoded `POST https://auth.openai.com/oauth/token`. The app runs the loopback listener itself and writes an `auth.json` in exactly the shape Codex writes. Device-code mode spawns `codex login --device-auth` with `CODEX_HOME` pointing at the account directory and parses the URL and code from its output.
@@ -143,32 +207,34 @@ Browser mode reproduces Codex CLI's own OAuth client: same `client_id`, `redirec
 ## 7. 🔐 Security notes
 
 - `auth.json` files contain bearer tokens. Codex Monitor stores them with mode `0600` and never sends them anywhere except `chatgpt.com` / `auth.openai.com`. "Copy auth.json" puts the whole file (including tokens) on your clipboard — that is the point, but be aware.
-- One `auth.json` on two machines: whichever refreshes first may invalidate the other's refresh token. Prefer `codex-acct export` per machine, and avoid refreshing the same account from both sides.
+- One `auth.json` on two machines: whichever refreshes first may invalidate the other's refresh token. Prefer `codex-monitor export` per machine, and avoid refreshing the same account from both sides.
 - `codex logout` revokes tokens server-side (`/oauth/revoke`). With per-account directories you never need it.
 - Nothing in this repository contains credentials; `~/.codex-accounts` is outside the repo.
 
 ## 8. 🧪 Development & tests
 
 ```
-Sources/CodexMonitor/   Swift (SwiftUI + AppKit): NSPanel widget, MenuBarExtra, OAuth login, rollout tailer
-  Strings*.swift        all user-facing text (Chinese UI)
-bin/codex-acct          Python CLI (stdlib only)
-scripts/build.sh        swiftc build + ad-hoc codesign (outside the source tree, see below)
-scripts/install.sh      install + LaunchAgent;  scripts/uninstall.sh
-tests/test_cli.py       sandboxed end-to-end test of codex-acct (temp CODEX_HOME, fake JWTs, no network)
-tests/run_store_tests.sh  Swift tests: profile store, adopt/switch/backup, JWT/ISO8601 parsing,
-                        usage decoding, rollout parsing + tailing, OAuth helpers
+codex_monitor/          Python package (stdlib only, 3.8+): store, usage API + rollout tailer, OAuth, web dashboard, autostart
+  web.py / web_i18n.py  the dashboard (single HTML page, EN + 中文)
+bin/codex-monitor       run the CLI straight from a checkout (bin/codex-acct is the same thing)
+Sources/CodexMonitor/   Swift (SwiftUI + AppKit) native widget; Strings*.swift hold all its text
+scripts/build.sh        swiftc build + ad-hoc codesign;  scripts/install.sh / uninstall.sh
+tests/test_python.py    17 unit/integration tests: parsing, tailer, views, OAuth (fake callback), web API, simulated Windows branches
+tests/test_cli.py       sandboxed end-to-end test of the CLI (temp CODEX_HOME, fake JWTs, no network)
+tests/linux_smoke.sh    what the Docker check runs: tests + pip install + dashboard boot + autostart on Linux
+tests/run_store_tests.sh  Swift tests (macOS)
 ```
 
 ```bash
-./tests/run_store_tests.sh && python3 tests/test_cli.py
-CODEX_MONITOR_DEMO=1 CODEX_MONITOR_SNAPSHOT=/tmp/panel.png ~/Applications/CodexMonitor.app/Contents/MacOS/CodexMonitor
-#   demo mode: fabricated accounts, no network — renders the panel to a PNG and quits
-CODEX_MONITOR_TEST_LOGIN=browser ~/Applications/CodexMonitor.app/Contents/MacOS/CodexMonitor
-#   self-test of the OAuth plumbing: listener → fake callback → token exchange rejected (expected)
+python3 tests/test_python.py && python3 tests/test_cli.py            # any OS
+./tests/run_store_tests.sh                                             # macOS, Swift side
+tar --exclude=.git -c . | docker run --rm -i python:3.8-slim bash -c 'mkdir /src && tar -x -C /src && bash /src/tests/linux_smoke.sh'
+CODEX_MONITOR_DEMO=1 codex-monitor serve                               # dashboard with fabricated accounts, no network
+CODEX_MONITOR_DEMO=1 CODEX_MONITOR_SNAPSHOT=/tmp/panel.png ~/Applications/CodexMonitor.app/Contents/MacOS/CodexMonitor   # widget → PNG
+CODEX_MONITOR_TEST_LOGIN=browser ~/Applications/CodexMonitor.app/Contents/MacOS/CodexMonitor   # widget OAuth self-test
 ```
 
-The build happens in `~/Library/Caches/CodexMonitor/build` because iCloud-synced folders attach extended attributes asynchronously and `codesign` then rejects the bundle.
+The Swift build happens in `~/Library/Caches/CodexMonitor/build` because iCloud-synced folders attach extended attributes asynchronously and `codesign` then rejects the bundle.
 
 ## 9. ❓ FAQ
 
@@ -179,6 +245,10 @@ The build happens in `~/Library/Caches/CodexMonitor/build` because iCloud-synced
 **Numbers differ from the usage page for a minute.** The usage API can lag; the live line under the bars tells you which source you are looking at. The Codex app and the widget use the same session events.
 
 **Port 1455 is busy.** Another `codex login` (or the Codex app's login) is running; finish or cancel it and retry.
+
+**The dashboard says 403.** Open it through the exact URL `codex-monitor serve` printed — it carries a per-run token that stops other websites in your browser from driving the API.
+
+**Started at login but the dashboard took ages to appear.** Fixed in 1.0: the LaunchAgent used to run at `Background` priority, which gets starved on busy Macs. Re-run `codex-monitor autostart install`.
 
 ## License
 

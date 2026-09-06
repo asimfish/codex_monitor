@@ -11,6 +11,6 @@ launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
 pkill -x "$APP_NAME" 2>/dev/null || true
 rm -f "$PLIST"
 rm -rf "$APP_DST"
-rm -f "$HOME/.local/bin/codex-acct"
+rm -f "$HOME/.local/bin/codex-acct" "$HOME/.local/bin/codex-monitor"
 echo "removed $APP_NAME, its LaunchAgent and the codex-acct link."
 echo "stored logins in ~/.codex-accounts were left untouched."

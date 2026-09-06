@@ -28,9 +28,10 @@ rm -rf "$APP_DST"
 cp -R "$BUILT_APP" "$APP_DST"
 xattr -cr "$APP_DST" 2>/dev/null || true
 
-echo "==> linking CLI: $BIN_DIR/codex-acct"
+echo "==> linking CLI: $BIN_DIR/codex-monitor (+ codex-acct alias)"
 mkdir -p "$BIN_DIR"
-chmod +x "$ROOT/bin/codex-acct"
+chmod +x "$ROOT/bin/codex-acct" "$ROOT/bin/codex-monitor"
+ln -sf "$ROOT/bin/codex-monitor" "$BIN_DIR/codex-monitor"
 ln -sf "$ROOT/bin/codex-acct" "$BIN_DIR/codex-acct"
 
 echo "==> writing LaunchAgent $PLIST"
@@ -78,7 +79,7 @@ else
   exit 1
 fi
 
-if ! command -v codex-acct >/dev/null 2>&1; then
-  echo "note: $BIN_DIR is not on PATH in this shell; add it or call $BIN_DIR/codex-acct directly."
+if ! command -v codex-monitor >/dev/null 2>&1; then
+  echo "note: $BIN_DIR is not on PATH in this shell; add it or call $BIN_DIR/codex-monitor directly."
 fi
 echo "done."
