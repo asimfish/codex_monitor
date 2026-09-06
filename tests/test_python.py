@@ -139,6 +139,37 @@ class UsageTests(unittest.TestCase):
         past = time.time() - 3600
         os.utime(old, (past, past))
         self.assertIsNone(tailer.poll_latest()[0], "stale files are ignored")
+        # a long-lived thread whose rollout sits under an OLD day directory is still found
+        old_day = sessions / "2026" / "01" / "15"
+        old_day.mkdir(parents=True, exist_ok=True)
+        old_thread = old_day / "rollout-2026-01-15T10-00-00-old-thread.jsonl"
+        old_thread.write_bytes(ROLLOUT_LINE.replace(b"2026-09-06T12:07:48.582Z", b"2026-09-06T12:20:00.000Z").replace(b'"used_percent":4.0', b'"used_percent":33.0') + b"\n")
+        fresh = usage.RolloutTailer(sessions)
+        main, _ = fresh.poll_latest()
+        self.assertIsNotNone(main, "full scan must find recently modified files in any day directory")
+        with open(old_thread, "ab") as fh:
+            fh.write(ROLLOUT_LINE.replace(b"2026-09-06T12:07:48.582Z", b"2026-09-06T12:30:00.000Z").replace(b'"used_percent":4.0', b'"used_percent":34.0') + b"\n")
+        main, _ = fresh.poll_latest()
+        self.assertEqual(main.primary["used_percent"], 34.0, "appends between full scans are tailed")
+
+    def test_app_server_event_watcher(self):
+        import sqlite3
+        home = SANDBOX / "codex"
+        db_path = home / "logs_2.sqlite"
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, ts_nanos INTEGER NOT NULL, level TEXT NOT NULL, target TEXT NOT NULL, feedback_log_body TEXT)")
+        conn.execute("INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body) VALUES (1, 0, 'INFO', 'codex_app_server::outgoing_message', 'app-server event: account/rateLimits/updated targeted_connections=1')")
+        conn.commit()
+        w = usage.AppServerEventWatcher(home)
+        self.assertEqual(w.poll(), 0, "rows that existed before the watcher started are not events")
+        conn.execute("INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body) VALUES (2, 0, 'INFO', 'codex_app_server::outgoing_message', 'app-server event: item/agentMessage/delta targeted_connections=1')")
+        conn.execute("INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body) VALUES (3, 0, 'INFO', 'codex_app_server::outgoing_message', 'app-server event: account/rateLimits/updated targeted_connections=1')")
+        conn.execute("INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body) VALUES (4, 0, 'INFO', 'codex_app_server::outgoing_message', 'app-server event: account/rateLimits/updated targeted_connections=1')")
+        conn.commit()
+        self.assertEqual(w.poll(), 2)
+        self.assertEqual(w.poll(), 0)
+        conn.close()
+        db_path.unlink()
 
     def test_view_prefers_live_when_newer(self):
         now = datetime.now(timezone.utc)

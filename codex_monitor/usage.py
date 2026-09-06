@@ -204,31 +204,77 @@ class RolloutTailer:
     """Incrementally reads bytes appended to recently modified rollout files under one
     `sessions` directory. Cheap enough to run every couple of seconds."""
 
-    def __init__(self, sessions_dir: Path, recent_window: float = 15 * 60, initial_tail_bytes: int = 512 * 1024):
+    def __init__(self, sessions_dir: Path, recent_window: float = 15 * 60, initial_tail_bytes: int = 512 * 1024,
+                 full_scan_every: float = 10.0):
         self.sessions_dir = Path(sessions_dir)
         self.recent_window = recent_window
         self.initial_tail_bytes = initial_tail_bytes
+        self.full_scan_every = full_scan_every
         self._offsets: Dict[str, int] = {}
         self._partial: Dict[str, bytes] = {}
+        self._candidates: List[Path] = []
+        self._last_full_scan = 0.0
 
-    def _recent_files(self, now: datetime) -> List[Path]:
-        dirs = set()
-        local_now = now.astimezone()
-        for day_offset in (0, 1):
-            d = local_now - timedelta(days=day_offset)
-            dirs.add(self.sessions_dir / f"{d.year:04d}" / f"{d.month:02d}" / f"{d.day:02d}")
-        u = now.astimezone(timezone.utc)
-        dirs.add(self.sessions_dir / f"{u.year:04d}" / f"{u.month:02d}" / f"{u.day:02d}")
+    def _full_scan(self, cutoff: float) -> List[Path]:
+        """Every rollout file (any date directory) modified after `cutoff`. Threads can live for
+        weeks, so their file sits under the day they were *created*, not today; ~1000 files scan
+        in well under 100 ms."""
         out: List[Path] = []
-        cutoff = now.timestamp() - self.recent_window
-        for d in dirs:
+        try:
+            years = list(os.scandir(self.sessions_dir))
+        except OSError:
+            return out
+        for y in years:
+            if not y.is_dir():
+                continue
             try:
-                for f in d.iterdir():
-                    if f.suffix == ".jsonl" and f.stat().st_mtime >= cutoff:
-                        out.append(f)
+                months = list(os.scandir(y.path))
             except OSError:
                 continue
+            for m in months:
+                if not m.is_dir():
+                    continue
+                try:
+                    days = list(os.scandir(m.path))
+                except OSError:
+                    continue
+                for d in days:
+                    if not d.is_dir():
+                        continue
+                    try:
+                        for f in os.scandir(d.path):
+                            if f.name.endswith(".jsonl"):
+                                try:
+                                    if f.stat().st_mtime >= cutoff:
+                                        out.append(Path(f.path))
+                                except OSError:
+                                    pass
+                    except OSError:
+                        continue
         return out
+
+    def _recent_files(self, now: datetime) -> List[Path]:
+        cutoff = now.timestamp() - self.recent_window
+        if now.timestamp() - self._last_full_scan >= self.full_scan_every:
+            self._candidates = self._full_scan(cutoff)
+            self._last_full_scan = now.timestamp()
+            return list(self._candidates)
+        # Between full scans: re-check known candidates plus anything new in today's directory.
+        local_now = now.astimezone()
+        today = self.sessions_dir / f"{local_now.year:04d}" / f"{local_now.month:02d}" / f"{local_now.day:02d}"
+        seen = {str(p) for p in self._candidates}
+        try:
+            for f in today.iterdir():
+                if f.suffix == ".jsonl" and str(f) not in seen:
+                    try:
+                        if f.stat().st_mtime >= cutoff:
+                            self._candidates.append(f)
+                            seen.add(str(f))
+                    except OSError:
+                        pass
+        except OSError:
+            pass
+        return list(self._candidates)
 
     def poll(self, now: Optional[datetime] = None) -> List[LiveEvent]:
         now = now or now_utc()
@@ -275,6 +321,79 @@ class RolloutTailer:
                 if prev is None or ev.timestamp > prev.timestamp:
                     extras[ev.limit_id] = ev
         return main, extras
+
+
+# ---------------------------------------------------------------- app-server event trigger
+
+class AppServerEventWatcher:
+    """The Codex desktop app (and CLI threads migrated to SQLite history) no longer append
+    rollout files, but the app-server logs one row per `account/rateLimits/updated` event into
+    `$CODEX_HOME/logs_*.sqlite`. The row carries no numbers, but it tells us *when* usage just
+    changed, so the usage API can be polled immediately instead of waiting for the next tick."""
+
+    EVENT_PREFIX = "app-server event: account/rateLimits/updated"
+
+    def __init__(self, codex_home: Path):
+        self.codex_home = Path(codex_home)
+        self._db_path: Optional[Path] = None
+        self._conn = None
+        self._last_id: Optional[int] = None
+        self._last_open_attempt = 0.0
+
+    def _find_db(self) -> Optional[Path]:
+        try:
+            cands = [p for p in self.codex_home.iterdir() if p.name.startswith("logs_") and p.suffix == ".sqlite"]
+        except OSError:
+            return None
+        if not cands:
+            return None
+        return max(cands, key=lambda p: p.stat().st_mtime if p.exists() else 0)
+
+    def _open(self, now: float) -> bool:
+        if self._conn is not None:
+            return True
+        if now - self._last_open_attempt < 30:
+            return False
+        self._last_open_attempt = now
+        path = self._find_db()
+        if not path:
+            return False
+        try:
+            import sqlite3
+            conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=0.5, check_same_thread=False)
+            conn.execute("PRAGMA query_only = 1")
+            row = conn.execute("SELECT max(id) FROM logs").fetchone()
+        except Exception:
+            return False
+        self._conn, self._db_path = conn, path
+        self._last_id = int(row[0]) if row and row[0] is not None else 0
+        return True
+
+    def poll(self) -> int:
+        """Number of new rateLimits/updated events since the previous poll."""
+        import time as _time
+        now = _time.time()
+        if not self._open(now):
+            return 0
+        assert self._conn is not None
+        try:
+            rows = self._conn.execute(
+                "SELECT id FROM logs WHERE id > ? AND target = 'codex_app_server::outgoing_message' "
+                "AND feedback_log_body LIKE ? ORDER BY id",
+                (self._last_id, self.EVENT_PREFIX + "%"),
+            ).fetchall()
+            max_row = self._conn.execute("SELECT max(id) FROM logs").fetchone()
+        except Exception:
+            # database rotated or locked hard: reopen later
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+            return 0
+        if max_row and max_row[0] is not None:
+            self._last_id = int(max_row[0])
+        return len(rows)
 
 
 # ---------------------------------------------------------------- per-account snapshot

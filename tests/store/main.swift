@@ -165,6 +165,21 @@ let oldFile = dayDir.appendingPathComponent("rollout-test-old.jsonl")
 try! (line(at: "2026-09-06T12:09:00.000Z", used: 50) + "\n").write(to: oldFile, atomically: true, encoding: .utf8)
 try! fm.setAttributes([.modificationDate: Date().addingTimeInterval(-3600)], ofItemAtPath: oldFile.path)
 check(tailer.pollLatest().main == nil, "file modified an hour ago is ignored")
+// a long-lived thread whose rollout lives under an OLD day directory is still picked up
+let oldDay = sessions.appendingPathComponent("2026/01/15")
+try! fm.createDirectory(at: oldDay, withIntermediateDirectories: true)
+let oldThread = oldDay.appendingPathComponent("rollout-2026-01-15T10-00-00-old-thread.jsonl")
+try! (line(at: "2026-09-06T12:20:00.000Z", used: 33) + "\n").write(to: oldThread, atomically: true, encoding: .utf8)
+let fresh = RolloutTailer(sessionsDir: sessions)
+let fromOld = fresh.pollLatest()
+check(fromOld.main != nil && [12.0, 33.0].contains(fromOld.main!.primary!.usedPercent), "full scan finds recently modified files in any day directory")
+// appended later (between full scans) is still seen because the file is a known candidate
+let h4 = try! FileHandle(forWritingTo: oldThread)
+h4.seekToEndOfFile()
+h4.write(Data((line(at: "2026-09-06T12:30:00.000Z", used: 34) + "\n").utf8))
+try? h4.close()
+check(fresh.pollLatest().main?.primary?.usedPercent == 34, "appends to an old-directory thread are tailed")
+
 // spark events land in extras
 let h3 = try! FileHandle(forWritingTo: rolloutFile)
 h3.seekToEndOfFile()

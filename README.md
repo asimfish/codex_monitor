@@ -190,7 +190,10 @@ Layout:
 | `auth.json` (JWT claims) | email, plan, account id, subscription expiry, token validity | on change (polled every 10 s) |
 | `GET {chatgpt_base_url}/wham/usage` | rate-limit windows, per-model limits, credits, reset-credit count | every 30 s (configurable 15 s – 5 min) |
 | `GET …/wham/rate-limit-reset-credits` | reset coupons and their expiry | every 3 min |
-| `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` (`token_count` events) | **real-time** rate limits after every model response — identical to what the Codex app shows | tailed every 2 s (only bytes appended to files modified in the last 15 min) |
+| `~/.codex/sessions/**/rollout-*.jsonl` (`token_count` events) | **real-time** rate limits after every model response of CLI / `codex exec` sessions — identical to what the Codex app shows | tailed every 1 s (only bytes appended to files modified in the last 15 min; every day directory is walked every 10 s because long-lived threads sit under their creation date) |
+| `$CODEX_HOME/logs_*.sqlite` rows `account/rateLimits/updated` | **trigger** for desktop-app usage: those threads no longer write rollouts, but the app-server logs one row per rate-limit update, so the usage API is fetched immediately | checked every 1 s (indexed query, ~20 ms) |
+
+**Latency budget** (measured on the author's machine): CLI/exec usage 0.2–1 s after the response (rollout tail); desktop-app usage ≈ 1.5–2.5 s (≤1 s to notice the log row + ~1.2 s usage-API round trip); usage from other devices or Codex Cloud only via the periodic poll (30 s default → 15 s average, 15 s if you pick the 15 s interval).
 
 Live events win when they are newer than the last API fetch, or when the API still reports *less* usage for the same window than an event from the last 2 minutes (the usage endpoint can lag the per-response headers slightly). `~/.codex/sessions` is attributed to the active account (events before the last `auth.json` change are ignored); `~/.codex-accounts/<name>/sessions` to that account.
 

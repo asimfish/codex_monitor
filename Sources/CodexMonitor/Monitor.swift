@@ -109,6 +109,9 @@ final class QuotaMonitor: ObservableObject {
     private var backoffUntil: Date?
     /// One tailer per `sessions` directory being watched, keyed by path.
     private var tailers: [String: RolloutTailer] = [:]
+    /// One app-server log watcher per CODEX_HOME, keyed by path.
+    private var eventWatchers: [String: AppServerEventWatcher] = [:]
+    private var lastTriggeredFetch: [String: Date] = [:]
     private var liveTimer: Timer?
     /// Rollout events older than the last change of ~/.codex/auth.json may belong to a
     /// previously active account, so they are ignored for the main sessions directory.
@@ -151,8 +154,11 @@ final class QuotaMonitor: ObservableObject {
             Task { @MainActor in self?.clockTick += 1 }
         }
         pollLive()
-        liveTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollLive() }
+        liveTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.pollLive()
+                self?.pollAppServerEvents()
+            }
         }
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
@@ -291,6 +297,40 @@ final class QuotaMonitor: ObservableObject {
                         entries[idx].liveExtras[id] = ev
                     }
                 }
+            }
+        }
+    }
+
+    /// Desktop-app usage never shows up in rollouts; react to the app-server's own
+    /// `account/rateLimits/updated` log rows by fetching the account right away (at most one
+    /// triggered fetch per account per 3 s).
+    private func pollAppServerEvents() {
+        for idx in entries.indices {
+            let entry = entries[idx]
+            var homes: [URL] = []
+            if entry.isActive { homes.append(store.codexHome) }
+            if !entry.profile.isMain {
+                let own = entry.profile.directory
+                if let items = try? FileManager.default.contentsOfDirectory(atPath: own.path),
+                   items.contains(where: { $0.hasPrefix("logs_") && $0.hasSuffix(".sqlite") }) {
+                    homes.append(own)
+                }
+            }
+            for home in homes {
+                let key = home.path
+                let watcher: AppServerEventWatcher
+                if let w = eventWatchers[key] {
+                    watcher = w
+                } else {
+                    watcher = AppServerEventWatcher(codexHome: home)
+                    eventWatchers[key] = watcher
+                }
+                guard watcher.poll() > 0 else { continue }
+                if let last = lastTriggeredFetch[entry.id], Date().timeIntervalSince(last) < 3 { continue }
+                lastTriggeredFetch[entry.id] = Date()
+                NSLog("[CodexMonitor] app-server reported a rate-limit update for %@; fetching now", entry.profile.displayName)
+                let id = entry.id
+                Task { @MainActor in await self.refresh(entryId: id) }
             }
         }
     }

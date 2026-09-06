@@ -188,7 +188,10 @@ codex-monitor refresh work          # （可选，需确认）显式刷新 token
 | `auth.json`（JWT claims） | 邮箱、套餐、账号 id、订阅到期、token 有效期 | 变化即读（每 10 秒轮询 mtime） |
 | `GET {chatgpt_base_url}/wham/usage` | 限速窗口、附加模型额度、额度包、重置券数量 | 每 30 秒（可选 15 秒～5 分钟） |
 | `GET …/wham/rate-limit-reset-credits` | 重置券及其到期日 | 每 3 分钟 |
-| `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl` 里的 `token_count` 事件 | **实时**：每轮模型响应后的限速信息，与 Codex App 显示的完全一致 | 每 2 秒 tail 一次（只读最近 15 分钟内有写入的文件的新增字节） |
+| `~/.codex/sessions/**/rollout-*.jsonl` 里的 `token_count` 事件 | **实时**：CLI / `codex exec` 会话每轮响应后的限速信息，与 Codex App 显示的完全一致 | 每 1 秒 tail 一次（只读最近 15 分钟内有写入文件的新增字节；每 10 秒遍历一次所有日期目录，因为长期线程的文件在它创建那天的目录下） |
+| `$CODEX_HOME/logs_*.sqlite` 里的 `account/rateLimits/updated` 行 | **触发器**：桌面端线程不再写 rollout，但 app-server 每次限速更新都会记一行日志，看到就立刻拉接口 | 每 1 秒查一次（走索引，约 20 ms） |
+
+**延迟预算**（在作者机器上实测）：CLI / `codex exec` 的用量在响应后 0.2–1 秒内更新（rollout tail）；桌面端用量约 1.5–2.5 秒（≤1 秒发现日志行 + 约 1.2 秒接口往返）；其他设备或 Codex Cloud 产生的用量只能靠周期轮询（默认 30 秒 → 平均 15 秒；选 15 秒档则平均 7.5 秒）。
 
 实时事件比上次接口拉取更新时优先显示；如果接口对同一窗口报的已用比例比 2 分钟内的本地事件还低（接口有时略滞后于逐响应的头信息），也以本地事件为准。`~/.codex/sessions` 归给当前使用中的账号（只认切换 `auth.json` 之后的事件）；`~/.codex-accounts/<名字>/sessions` 归给对应账号。
 

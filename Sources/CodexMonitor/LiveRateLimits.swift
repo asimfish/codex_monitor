@@ -1,4 +1,90 @@
 import Foundation
+import SQLite3
+
+/// The Codex desktop app (and CLI threads migrated to SQLite history) do not append rollout
+/// files any more, but the app-server logs one row per `account/rateLimits/updated` event into
+/// `$CODEX_HOME/logs_*.sqlite`. The row has no numbers, but it says *when* usage just changed,
+/// so the usage API can be fetched immediately instead of at the next tick.
+final class AppServerEventWatcher {
+    static let eventPrefix = "app-server event: account/rateLimits/updated"
+
+    let codexHome: URL
+    private var db: OpaquePointer?
+    private var lastId: Int64 = 0
+    private var lastOpenAttempt: Date = .distantPast
+
+    init(codexHome: URL) {
+        self.codexHome = codexHome
+    }
+
+    deinit {
+        if let db = db { sqlite3_close_v2(db) }
+    }
+
+    private func findDatabase() -> URL? {
+        guard let items = try? FileManager.default.contentsOfDirectory(at: codexHome, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) else { return nil }
+        let logs = items.filter { $0.lastPathComponent.hasPrefix("logs_") && $0.pathExtension == "sqlite" }
+        return logs.max { a, b in
+            let ma = (try? a.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            let mb = (try? b.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+            return ma < mb
+        }
+    }
+
+    private func open() -> Bool {
+        if db != nil { return true }
+        guard Date().timeIntervalSince(lastOpenAttempt) > 30 else { return false }
+        lastOpenAttempt = Date()
+        guard let url = findDatabase() else { return false }
+        var handle: OpaquePointer?
+        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
+        guard sqlite3_open_v2(url.path, &handle, flags, nil) == SQLITE_OK, let h = handle else {
+            if let h = handle { sqlite3_close_v2(h) }
+            return false
+        }
+        sqlite3_busy_timeout(h, 300)
+        db = h
+        lastId = maxId() ?? 0
+        return true
+    }
+
+    private func maxId() -> Int64? {
+        guard let db = db else { return nil }
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, "SELECT max(id) FROM logs", -1, &stmt, nil) == SQLITE_OK, let s = stmt else { return nil }
+        defer { sqlite3_finalize(s) }
+        guard sqlite3_step(s) == SQLITE_ROW else { return nil }
+        return sqlite3_column_int64(s, 0)
+    }
+
+    /// Number of new rateLimits/updated rows since the previous poll.
+    func poll() -> Int {
+        guard open(), let db = db else { return 0 }
+        var stmt: OpaquePointer?
+        let sql = "SELECT count(*) FROM logs WHERE id > ? AND target = 'codex_app_server::outgoing_message' AND feedback_log_body LIKE ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let s = stmt else {
+            reset()
+            return 0
+        }
+        defer { sqlite3_finalize(s) }
+        sqlite3_bind_int64(s, 1, lastId)
+        let pattern = Self.eventPrefix + "%"
+        sqlite3_bind_text(s, 2, pattern, -1, unsafeBitCast(-1, to: sqlite3_destructor_type.self))
+        let rc = sqlite3_step(s)
+        guard rc == SQLITE_ROW else {
+            if rc != SQLITE_BUSY { reset() }
+            return 0
+        }
+        let count = Int(sqlite3_column_int64(s, 0))
+        if let m = maxId() { lastId = m }
+        return count
+    }
+
+    private func reset() {
+        if let db = db { sqlite3_close_v2(db) }
+        db = nil
+    }
+}
 
 /// Rate-limit snapshot taken from a `token_count` event that Codex appends to the session
 /// rollout (`$CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl`) after every model response.
@@ -74,8 +160,14 @@ final class RolloutTailer {
     /// When a file is seen for the first time, start this far from its end rather than at 0.
     var initialTailBytes: UInt64 = 512 * 1024
 
+    /// A full walk of every day directory happens at most this often; between walks only the
+    /// known candidates and today's directory are re-checked.
+    var fullScanInterval: TimeInterval = 10
+
     private var offsets: [String: UInt64] = [:]
     private var partial: [String: String] = [:]
+    private var candidates: [URL] = []
+    private var lastFullScan: Date = .distantPast
 
     init(sessionsDir: URL) {
         self.sessionsDir = sessionsDir
@@ -125,28 +217,51 @@ final class RolloutTailer {
         return (main, extras)
     }
 
-    private func recentFiles(now: Date) -> [URL] {
-        var dirs = Set<URL>()
-        let cal = Calendar.current
-        for dayOffset in 0...1 {
-            if let d = cal.date(byAdding: .day, value: -dayOffset, to: now) {
-                dirs.insert(dayDirectory(for: d, timeZone: .current))
-            }
+    /// Threads can live for weeks and their rollout sits under the day they were *created*, so a
+    /// periodic walk of every `YYYY/MM/DD` directory is needed (about 1000 files, a few dozen ms).
+    private func fullScan(now: Date) -> [URL] {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.contentModificationDateKey, .isDirectoryKey]
+        var out: [URL] = []
+        func subdirs(_ url: URL) -> [URL] {
+            (try? fm.contentsOfDirectory(at: url, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]))?
+                .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true } ?? []
         }
-        dirs.insert(dayDirectory(for: now, timeZone: TimeZone(identifier: "UTC")!))
-        var files: [URL] = []
-        for dir in dirs {
-            guard let items = try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]
-            ) else { continue }
-            for f in items where f.pathExtension == "jsonl" {
-                if let m = try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
-                   now.timeIntervalSince(m) < recentWindow {
-                    files.append(f)
+        for year in subdirs(sessionsDir) {
+            for month in subdirs(year) {
+                for day in subdirs(month) {
+                    guard let items = try? fm.contentsOfDirectory(at: day, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles]) else { continue }
+                    for f in items where f.pathExtension == "jsonl" {
+                        if let m = try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                           now.timeIntervalSince(m) < recentWindow {
+                            out.append(f)
+                        }
+                    }
                 }
             }
         }
-        return files
+        return out
+    }
+
+    private func recentFiles(now: Date) -> [URL] {
+        if now.timeIntervalSince(lastFullScan) >= fullScanInterval {
+            candidates = fullScan(now: now)
+            lastFullScan = now
+            return candidates
+        }
+        // Between full scans: known candidates plus anything new in today's directory.
+        let today = dayDirectory(for: now, timeZone: .current)
+        var seen = Set(candidates.map { $0.path })
+        if let items = try? FileManager.default.contentsOfDirectory(at: today, includingPropertiesForKeys: [.contentModificationDateKey], options: [.skipsHiddenFiles]) {
+            for f in items where f.pathExtension == "jsonl" && !seen.contains(f.path) {
+                if let m = try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                   now.timeIntervalSince(m) < recentWindow {
+                    candidates.append(f)
+                    seen.insert(f.path)
+                }
+            }
+        }
+        return candidates
     }
 
     private func dayDirectory(for date: Date, timeZone: TimeZone) -> URL {

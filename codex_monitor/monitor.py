@@ -32,6 +32,9 @@ class Monitor:
         self._signature = ""
         self._credits_fetched: Dict[str, datetime] = {}
         self._auto_refresh_at: Dict[str, datetime] = {}
+        self._event_watchers: Dict[str, usage.AppServerEventWatcher] = {}
+        self._last_triggered_fetch: Dict[str, datetime] = {}
+        self.triggered_fetches = 0
         self._stop = threading.Event()
         self._threads: List[threading.Thread] = []
         self.login: Optional[object] = None
@@ -203,6 +206,37 @@ class Monitor:
                         if prev is None or ev.timestamp > prev.timestamp:
                             st.live_extras[lid] = ev
 
+    def poll_app_server_events(self) -> None:
+        """Desktop-app usage: a new `account/rateLimits/updated` row in the app-server log means the
+        numbers just changed -> fetch the affected account right away (debounced to one fetch per
+        3 s per account)."""
+        with self.lock:
+            items = [(n, s) for n, s in self.states.items()]
+        for name, st in items:
+            homes = []
+            if st.active:
+                homes.append(paths.codex_home())
+            if not st.is_main:
+                own = Path(st.auth_path).parent
+                if (own / "logs_2.sqlite").exists() or any(own.glob("logs_*.sqlite")):
+                    homes.append(own)
+            for home in homes:
+                key = str(home)
+                w = self._event_watchers.get(key)
+                if w is None:
+                    w = usage.AppServerEventWatcher(home)
+                    self._event_watchers[key] = w
+                n = w.poll()
+                if n <= 0:
+                    continue
+                last = self._last_triggered_fetch.get(name)
+                if last and (now_utc() - last).total_seconds() < 3:
+                    continue
+                self._last_triggered_fetch[name] = now_utc()
+                self.triggered_fetches += 1
+                self.note(f"app-server reported a rate-limit update for {st.display_name}; fetching now")
+                threading.Thread(target=self.refresh_one, args=(name,), daemon=True).start()
+
     # ------------------------------------------------------------ background
 
     def start_background(self) -> None:
@@ -222,11 +256,15 @@ class Monitor:
                 self.refresh_all()
 
         def live() -> None:
-            while not self._stop.wait(2):
+            while not self._stop.wait(1):
                 try:
                     self.poll_live()
                 except Exception as e:  # never let the tailer kill the loop
                     self.note(f"live tail error: {e}")
+                try:
+                    self.poll_app_server_events()
+                except Exception as e:
+                    self.note(f"app-server event watch error: {e}")
 
         def files() -> None:
             while not self._stop.wait(10):
