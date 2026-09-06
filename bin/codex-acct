@@ -1,0 +1,718 @@
+#!/usr/bin/env python3
+"""codex-acct - keep several Codex (ChatGPT) logins on one machine.
+
+Layout
+  ~/.codex/auth.json                   what Codex CLI / the desktop app actually use ("main")
+  ~/.codex-accounts/<name>/auth.json   one isolated CODEX_HOME per account
+  ~/.codex-accounts/_backup/           copies of main auth.json taken before it is overwritten
+
+Environment
+  CODEX_HOME          override ~/.codex
+  CODEX_ACCOUNTS_DIR  override ~/.codex-accounts
+"""
+import argparse
+import base64
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import unicodedata
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+CODEX_HOME = Path(os.environ.get("CODEX_HOME") or "~/.codex").expanduser()
+ACCOUNTS = Path(os.environ.get("CODEX_ACCOUNTS_DIR") or "~/.codex-accounts").expanduser()
+MAIN_AUTH = CODEX_HOME / "auth.json"
+BACKUP_DIR = ACCOUNTS / "_backup"
+# Items symlinked into a profile dir so `codex-acct run <name>` behaves like the main install.
+SHARED_ITEMS = ["config.toml", "AGENTS.md", "instructions.md", "skills", "plugins", "agents"]
+DEFAULT_BASE = "https://chatgpt.com/backend-api"
+OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
+CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+USER_AGENT = "codex_cli_rs/0.153.3 (Mac OS; arm64) codex-acct/1.0"
+
+
+# ---------------------------------------------------------------- helpers
+
+def die(msg: str, code: int = 1) -> None:
+    print(f"错误：{msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def read_json(path: Path) -> Optional[dict]:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def jwt_claims(token: Optional[str]) -> dict:
+    if not token or token.count(".") < 2:
+        return {}
+    payload = token.split(".")[1]
+    payload += "=" * (-len(payload) % 4)
+    try:
+        return json.loads(base64.urlsafe_b64decode(payload))
+    except Exception:
+        return {}
+
+
+def parse_iso(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    t = s.strip().replace("Z", "+00:00")
+    # trim fractional seconds to 6 digits for fromisoformat
+    if "." in t:
+        head, tail = t.split(".", 1)
+        digits = ""
+        rest = tail
+        while rest and rest[0].isdigit():
+            digits += rest[0]
+            rest = rest[1:]
+        t = head + "." + (digits[:6] or "0") + rest
+    try:
+        dt = datetime.fromisoformat(t)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
+
+
+def epoch(v) -> Optional[datetime]:
+    try:
+        return datetime.fromtimestamp(float(v), tz=timezone.utc)
+    except Exception:
+        return None
+
+
+def local(dt: Optional[datetime], fmt: str = "%m-%d %H:%M") -> str:
+    if not dt:
+        return "—"
+    return dt.astimezone().strftime(fmt)
+
+
+def rel(dt: Optional[datetime]) -> str:
+    if not dt:
+        return ""
+    s = int((dt - datetime.now(timezone.utc)).total_seconds())
+    if s <= 0:
+        return "已过"
+    d, h, m = s // 86400, (s % 86400) // 3600, (s % 3600) // 60
+    if d > 0:
+        return f"{d}天{h}小时"
+    if h > 0:
+        return f"{h}小时{m}分"
+    return f"{max(m, 1)}分"
+
+
+def wlen(s: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
+
+
+def pad(s: str, width: int) -> str:
+    return s + " " * max(0, width - wlen(s))
+
+
+def table(rows: List[List[str]], header: List[str]) -> str:
+    cols = len(header)
+    widths = [wlen(h) for h in header]
+    for r in rows:
+        for i in range(cols):
+            widths[i] = max(widths[i], wlen(r[i]))
+    out = ["  ".join(pad(h, widths[i]) for i, h in enumerate(header))]
+    out.append("  ".join("-" * w for w in widths))
+    for r in rows:
+        out.append("  ".join(pad(c, widths[i]) for i, c in enumerate(r)))
+    return "\n".join(out)
+
+
+def sanitize(name: str) -> str:
+    keep = "".join(c if (c.isalnum() or c in "._-") else "-" for c in name.strip())
+    keep = keep.strip("._-")
+    if not keep:
+        die(f"无效的账号名：{name!r}")
+    return keep
+
+
+def atomic_write(path: Path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def base_url() -> str:
+    cfg = CODEX_HOME / "config.toml"
+    try:
+        for line in cfg.read_text(encoding="utf-8").splitlines():
+            t = line.strip()
+            if t.startswith("chatgpt_base_url") and "=" in t:
+                v = t.split("=", 1)[1].split("#", 1)[0].strip().strip("\"'")
+                if v.startswith("http"):
+                    return v.rstrip("/")
+    except Exception:
+        pass
+    return DEFAULT_BASE
+
+
+# ---------------------------------------------------------------- identity
+
+def identity(auth: Optional[dict]) -> dict:
+    tokens = (auth or {}).get("tokens") or {}
+    idc = jwt_claims(tokens.get("id_token"))
+    acc = jwt_claims(tokens.get("access_token"))
+    a_id = idc.get("https://api.openai.com/auth", {}) or {}
+    a_acc = acc.get("https://api.openai.com/auth", {}) or {}
+    prof = acc.get("https://api.openai.com/profile", {}) or {}
+    return {
+        "email": idc.get("email") or prof.get("email") or "",
+        "plan": a_id.get("chatgpt_plan_type") or a_acc.get("chatgpt_plan_type") or "",
+        "account_id": tokens.get("account_id") or a_id.get("chatgpt_account_id") or a_acc.get("chatgpt_account_id") or "",
+        "sub_until": parse_iso(a_id.get("chatgpt_subscription_active_until")),
+        "access_exp": epoch(acc.get("exp")) if acc.get("exp") else None,
+        "last_refresh": parse_iso((auth or {}).get("last_refresh")),
+        "auth_mode": (auth or {}).get("auth_mode") or ("apikey" if (auth or {}).get("OPENAI_API_KEY") else ""),
+        "has_tokens": bool(tokens.get("access_token")),
+    }
+
+
+def plan_label(p: str) -> str:
+    return {"pro": "Pro", "plus": "Plus", "free": "Free", "team": "Team", "business": "Business",
+            "enterprise": "Enterprise", "edu": "Edu", "go": "Go"}.get((p or "").lower(), p or "—")
+
+
+# ---------------------------------------------------------------- store
+
+def profiles() -> List[Tuple[str, Path, Optional[dict]]]:
+    if not ACCOUNTS.is_dir():
+        return []
+    out = []
+    for d in sorted(ACCOUNTS.iterdir(), key=lambda p: p.name.lower()):
+        if not d.is_dir() or d.name.startswith(("_", ".")):
+            continue
+        auth_path = d / "auth.json"
+        if auth_path.exists():
+            out.append((d.name, d, read_json(auth_path)))
+    return out
+
+
+def main_auth() -> Optional[dict]:
+    return read_json(MAIN_AUTH) if MAIN_AUTH.exists() else None
+
+
+def find_by_account(account_id: str, exclude: Optional[str] = None) -> Optional[str]:
+    if not account_id:
+        return None
+    for name, _d, auth in profiles():
+        if name != exclude and identity(auth)["account_id"] == account_id:
+            return name
+    return None
+
+
+def profile_dir(name: str) -> Path:
+    d = ACCOUNTS / name
+    if not (d / "auth.json").exists():
+        die(f"没有名为「{name}」的账号（目录 {d} 里没有 auth.json）。用 `codex-acct list` 查看。")
+    return d
+
+
+def adopt(quiet: bool = False) -> Optional[str]:
+    """If ~/.codex/auth.json belongs to a stored profile and is newer, copy it back."""
+    m = main_auth()
+    if not m:
+        return None
+    mid = identity(m)
+    name = find_by_account(mid["account_id"])
+    if not name:
+        return None
+    target = ACCOUNTS / name / "auth.json"
+    tid = identity(read_json(target))
+    m_ts = mid["last_refresh"] or datetime.fromtimestamp(MAIN_AUTH.stat().st_mtime, tz=timezone.utc)
+    t_ts = tid["last_refresh"] or datetime.fromtimestamp(target.stat().st_mtime, tz=timezone.utc)
+    if m_ts <= t_ts:
+        return None
+    data = MAIN_AUTH.read_bytes()
+    if target.read_bytes() == data:
+        return None
+    atomic_write(target, data)
+    msg = f"已把 ~/.codex/auth.json 中刷新过的 token 同步回账号「{name}」"
+    if not quiet:
+        print("↺ " + msg)
+    return msg
+
+
+def codex_processes_running() -> bool:
+    try:
+        out = subprocess.run(["pgrep", "-fl", "codex"], capture_output=True, text=True).stdout
+    except Exception:
+        return False
+    for line in out.splitlines():
+        if "codex-acct" in line:
+            continue
+        if "/bin/codex" in line or "Codex Framework" in line or "app-server" in line:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------- HTTP
+
+def http_get(url: str, token: str, account_id: str) -> dict:
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "ChatGPT-Account-Id": account_id,
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json",
+        "originator": "codex_cli_rs",
+    })
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def fetch_usage(auth: dict) -> Tuple[Optional[dict], Optional[dict], Optional[str]]:
+    tokens = auth.get("tokens") or {}
+    tok = tokens.get("access_token")
+    if not tok:
+        return None, None, "没有 access_token（API key 模式？）"
+    ident = identity(auth)
+    if ident["access_exp"] and ident["access_exp"] < datetime.now(timezone.utc):
+        return None, None, f"access token 已于 {local(ident['access_exp'])} 过期，需要 refresh"
+    base = base_url()
+    try:
+        usage = http_get(base + "/wham/usage", tok, ident["account_id"])
+    except urllib.error.HTTPError as e:
+        return None, None, f"HTTP {e.code}" + ("（token 失效）" if e.code == 401 else "")
+    except Exception as e:
+        return None, None, f"网络错误：{e}"
+    try:
+        credits = http_get(base + "/wham/rate-limit-reset-credits", tok, ident["account_id"])
+    except Exception:
+        credits = None
+    return usage, credits, None
+
+
+def window_label(secs: Optional[int]) -> str:
+    if not secs:
+        return "额度"
+    if secs in (18000, 86400, 604800):
+        return {18000: "5小时", 86400: "每天", 604800: "每周"}[secs]
+    if secs % 86400 == 0:
+        return f"{secs // 86400}天"
+    return f"{secs // 3600}小时"
+
+
+def windows_of(rl: Optional[dict]) -> List[dict]:
+    if not rl:
+        return []
+    ws = [w for w in (rl.get("primary_window"), rl.get("secondary_window")) if w]
+    return sorted(ws, key=lambda w: w.get("limit_window_seconds") or 0)
+
+
+def fmt_window(w: dict) -> str:
+    remaining = max(0, 100 - float(w.get("used_percent") or 0))
+    reset = epoch(w["reset_at"]) if w.get("reset_at") else None
+    pct = f"{remaining:.0f}%" if remaining == int(remaining) else f"{remaining:.1f}%"
+    return f"{window_label(w.get('limit_window_seconds'))} 剩 {pct}，重置 {local(reset)}（{rel(reset)}后）"
+
+
+# ---------------------------------------------------------------- commands
+
+def cmd_add(a) -> None:
+    name = sanitize(a.name)
+    d = ACCOUNTS / name
+    if (d / "auth.json").exists() and not a.force:
+        die(f"账号「{name}」已存在；换个名字，或加 --force 重新登录覆盖。")
+    d.mkdir(parents=True, exist_ok=True)
+    env = dict(os.environ, CODEX_HOME=str(d))
+    cmd = ["codex", "login"] + ([] if a.browser else ["--device-auth"])
+    print(f"→ 在隔离目录 {d} 里登录（CODEX_HOME 已指向这里，不会碰 ~/.codex/auth.json）")
+    if a.browser:
+        print("  提示：浏览器里如果已登录别的 ChatGPT 账号，可能会直接用那个账号授权；建议先在隐身窗口登录目标账号。")
+    else:
+        print("  提示：把下面的链接复制到浏览器【隐身窗口】，用要添加的 ChatGPT 账号登录并输入一次性代码。")
+        print("  注意：设备码授权在 ChatGPT 里默认关闭。若页面提示「请在安全设置中为 Codex 启用设备代码授权」，")
+        print("        先用该账号登录 chatgpt.com → 设置 → 安全 → 打开 Codex 的设备代码授权，再输入代码。")
+        print("        不想改设置的话，直接在悬窗里点「添加账号」用浏览器登录（不需要任何设置）。")
+    print()
+    rc = subprocess.call(cmd, env=env)
+    if rc != 0:
+        die(f"codex login 退出码 {rc}")
+    auth = read_json(d / "auth.json")
+    if not auth:
+        die("登录结束了，但目录里没有 auth.json")
+    ident = identity(auth)
+    other = find_by_account(ident["account_id"], exclude=name)
+    print()
+    print(f"✓ 已添加账号「{name}」：{ident['email'] or '?'}（{plan_label(ident['plan'])}）")
+    print(f"  auth.json: {d / 'auth.json'}")
+    if other:
+        print(f"⚠ 这个 ChatGPT 账号已经存在于「{other}」，两份 token 都能用，但注意别混着 refresh。")
+    print("  下一步：`codex-acct use " + name + "` 切换成主账号，或 `codex-acct run " + name + "` 并行使用。")
+
+
+def cmd_import(a) -> None:
+    name = sanitize(a.name)
+    src = Path(a.file).expanduser()
+    auth = read_json(src)
+    if not auth or not (auth.get("tokens") or auth.get("OPENAI_API_KEY")):
+        die(f"{src} 不是有效的 Codex auth.json")
+    d = ACCOUNTS / name
+    if (d / "auth.json").exists() and not a.force:
+        die(f"账号「{name}」已存在；加 --force 覆盖。")
+    atomic_write(d / "auth.json", src.read_bytes())
+    ident = identity(auth)
+    print(f"✓ 已导入「{name}」：{ident['email'] or '?'}（{plan_label(ident['plan'])}），token 有效期至 {local(ident['access_exp'])}")
+
+
+def cmd_list(a) -> None:
+    adopt()
+    m = main_auth()
+    mid = identity(m) if m else None
+    rows = []
+    items = []
+    matched = False
+    for name, d, auth in profiles():
+        ident = identity(auth)
+        active = bool(mid and ident["account_id"] and ident["account_id"] == mid["account_id"])
+        matched = matched or active
+        items.append({"name": name, "path": str(d / "auth.json"), "active": active, **serial(ident)})
+        rows.append([("● " if active else "  ") + name, ident["email"] or "—", plan_label(ident["plan"]),
+                     token_state(ident), local(ident["sub_until"]), local(ident["last_refresh"], "%Y-%m-%d %H:%M")])
+    if m and not matched:
+        items.insert(0, {"name": "(~/.codex)", "path": str(MAIN_AUTH), "active": True, **serial(mid)})
+        rows.insert(0, ["● (~/.codex 未归档)", mid["email"] or "—", plan_label(mid["plan"]), token_state(mid),
+                        local(mid["sub_until"]), local(mid["last_refresh"], "%Y-%m-%d %H:%M")])
+    if a.json:
+        print(json.dumps(items, ensure_ascii=False, indent=2))
+        return
+    if not rows:
+        print(f"还没有账号。用 `codex-acct add <名字>` 添加，或 `codex-acct save <名字>` 保存当前 ~/.codex 登录。")
+        return
+    print(table(rows, ["账号", "邮箱", "套餐", "Token", "订阅到期", "凭证最后刷新"]))
+    print("\n● = 当前 ~/.codex/auth.json 正在使用的账号")
+
+
+def serial(ident: dict) -> dict:
+    return {
+        "email": ident["email"], "plan": ident["plan"], "account_id": ident["account_id"],
+        "subscription_until": ident["sub_until"].isoformat() if ident["sub_until"] else None,
+        "access_token_expires": ident["access_exp"].isoformat() if ident["access_exp"] else None,
+        "last_refresh": ident["last_refresh"].isoformat() if ident["last_refresh"] else None,
+    }
+
+
+def token_state(ident: dict) -> str:
+    if not ident["has_tokens"]:
+        return "API key" if ident["auth_mode"] == "apikey" else "无"
+    exp = ident["access_exp"]
+    if not exp:
+        return "?"
+    if exp < datetime.now(timezone.utc):
+        return f"已过期 {local(exp)}"
+    return f"{local(exp)}（剩{rel(exp)}）"
+
+
+def cmd_use(a) -> None:
+    d = profile_dir(a.name)
+    adopt()
+    m = main_auth()
+    if m:
+        mid = identity(m)
+        if not find_by_account(mid["account_id"]):
+            BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+            tag = (mid["email"] or mid["account_id"] or "unknown").replace("@", "_at_")
+            dst = BACKUP_DIR / f"auth-{tag}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.json"
+            shutil.copy2(MAIN_AUTH, dst)
+            os.chmod(dst, 0o600)
+            print(f"↳ 当前 ~/.codex/auth.json（{mid['email'] or '?'}）不属于任何账号目录，已备份到 {dst}")
+    atomic_write(MAIN_AUTH, (d / "auth.json").read_bytes())
+    ident = identity(read_json(MAIN_AUTH))
+    print(f"✓ 已切换：~/.codex/auth.json → 「{a.name}」（{ident['email'] or '?'}，{plan_label(ident['plan'])}）")
+    if codex_processes_running():
+        print("⚠ 检测到 Codex 进程仍在运行（CLI / 桌面端）。它们可能仍持有旧账号，请重启后再用。")
+
+
+def cmd_save(a) -> None:
+    name = sanitize(a.name)
+    m = main_auth()
+    if not m:
+        die(f"{MAIN_AUTH} 不存在")
+    d = ACCOUNTS / name
+    if (d / "auth.json").exists() and not a.force:
+        die(f"账号「{name}」已存在；加 --force 覆盖。")
+    atomic_write(d / "auth.json", MAIN_AUTH.read_bytes())
+    ident = identity(m)
+    print(f"✓ 已把当前 ~/.codex 登录保存为「{name}」：{ident['email'] or '?'}（{plan_label(ident['plan'])}）")
+
+
+def cmd_current(a) -> None:
+    m = main_auth()
+    if not m:
+        print("~/.codex/auth.json 不存在（未登录）")
+        return
+    ident = identity(m)
+    name = find_by_account(ident["account_id"])
+    print(f"{ident['email'] or '?'}  {plan_label(ident['plan'])}  账号目录：{name or '（未归档，可用 codex-acct save <名字> 保存）'}")
+    print(f"token 有效期至 {local(ident['access_exp'])}；订阅到期 {local(ident['sub_until'])}；凭证最后刷新 {local(ident['last_refresh'], '%Y-%m-%d %H:%M')}")
+
+
+def cmd_export(a) -> None:
+    d = profile_dir(a.name)
+    dst = Path(a.dest).expanduser() if a.dest else Path.cwd() / f"auth-{a.name}.json"
+    if dst.is_dir():
+        dst = dst / f"auth-{a.name}.json"
+    shutil.copy2(d / "auth.json", dst)
+    os.chmod(dst, 0o600)
+    ident = identity(read_json(d / "auth.json"))
+    print(f"✓ 已导出「{a.name}」到 {dst}（{ident['email'] or '?'}，token 有效期至 {local(ident['access_exp'])}）")
+    print("  放到别的机器的 ~/.codex/auth.json 即可使用。注意：任何一台机器 refresh 之后，其他机器手里的 refresh_token 可能失效。")
+
+
+def cmd_remove(a) -> None:
+    d = profile_dir(a.name)
+    if not a.yes:
+        ans = input(f"确定删除账号目录 {d} ？这不会退出登录，只是删本地文件。[y/N] ").strip().lower()
+        if ans not in ("y", "yes"):
+            print("已取消")
+            return
+    shutil.rmtree(d)
+    print(f"✓ 已删除「{a.name}」")
+
+
+def cmd_sync(a) -> None:
+    msg = adopt(quiet=True)
+    print("↺ " + msg if msg else "无需同步：~/.codex/auth.json 与账号目录一致，或不属于任何账号。")
+
+
+def cmd_status(a) -> None:
+    adopt(quiet=True)
+    m = main_auth()
+    mid = identity(m) if m else None
+    targets = []
+    seen_main = False
+    for name, d, auth in profiles():
+        if a.name and name != a.name:
+            continue
+        ident = identity(auth)
+        active = bool(mid and ident["account_id"] == mid["account_id"])
+        seen_main = seen_main or active
+        targets.append((name, auth, active))
+    if not a.name and m and not seen_main:
+        targets.insert(0, ("(~/.codex)", m, True))
+    if a.name and not targets:
+        die(f"没有名为「{a.name}」的账号")
+    results = []
+    for name, auth, active in targets:
+        usage, credits, err = fetch_usage(auth)
+        ident = identity(auth)
+        results.append({"name": name, "active": active, "error": err, "usage": usage, "reset_credits": credits, **serial(ident)})
+    if a.json:
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+        return
+    for r in results:
+        head = ("● " if r["active"] else "  ") + f"{r['name']}  {r['email'] or '?'}  {plan_label(r['plan'])}"
+        print(head)
+        if r["error"]:
+            print(f"    ✗ {r['error']}")
+        else:
+            u = r["usage"]
+            for w in windows_of(u.get("rate_limit")):
+                print("    " + fmt_window(w))
+            rl = u.get("rate_limit") or {}
+            if rl.get("limit_reached") or rl.get("allowed") is False:
+                print("    ✗ 已达到额度上限")
+            for extra in u.get("additional_rate_limits") or []:
+                ws = windows_of(extra.get("rate_limit"))
+                if ws:
+                    parts = []
+                    for w in ws:
+                        rem = max(0, 100 - float(w.get("used_percent") or 0))
+                        parts.append(f"{window_label(w.get('limit_window_seconds'))} 剩 {rem:.0f}%")
+                    print(f"    {extra.get('limit_name') or extra.get('metered_feature')}: " + "，".join(parts))
+            rc = (r["reset_credits"] or {}).get("available_count")
+            if rc is None:
+                rc = (u.get("rate_limit_reset_credits") or {}).get("available_count")
+            exp = None
+            for c in (r["reset_credits"] or {}).get("credits") or []:
+                if c.get("status", "available") == "available":
+                    e = parse_iso(c.get("expires_at"))
+                    if e and (exp is None or e < exp):
+                        exp = e
+            rc_txt = f"{rc} 次" + (f"（最早 {local(exp, '%m-%d')} 到期）" if exp else "") if rc is not None else "—"
+            cr = u.get("credits") or {}
+            credit_txt = f"，额度包余额 {cr.get('balance')}" if cr.get("has_credits") else ""
+            print(f"    重置次数 {rc_txt}{credit_txt}")
+        print(f"    订阅到期 {local(parse_iso(r['subscription_until']))}"
+              f"  token 有效期至 {local(parse_iso(r['access_token_expires']))}"
+              f"  凭证最后刷新 {local(parse_iso(r['last_refresh']), '%Y-%m-%d %H:%M')}")
+        print()
+
+
+def ensure_shared_links(d: Path) -> None:
+    for item in SHARED_ITEMS:
+        src = CODEX_HOME / item
+        dst = d / item
+        if src.exists() and not dst.exists() and not dst.is_symlink():
+            try:
+                os.symlink(src, dst)
+            except OSError:
+                pass
+
+
+def cmd_run(a) -> None:
+    d = profile_dir(a.name)
+    ensure_shared_links(d)
+    env = dict(os.environ, CODEX_HOME=str(d))
+    args = list(a.args)
+    if args and args[0] == "--":
+        args = args[1:]
+    ident = identity(read_json(d / "auth.json"))
+    print(f"→ CODEX_HOME={d}  （{ident['email'] or '?'}，{plan_label(ident['plan'])}）", file=sys.stderr)
+    try:
+        os.execvpe("codex", ["codex"] + args, env)
+    except FileNotFoundError:
+        die("找不到 codex 命令")
+
+
+def cmd_env(a) -> None:
+    d = profile_dir(a.name)
+    ensure_shared_links(d)
+    print(f"export CODEX_HOME={d}")
+
+
+def cmd_path(a) -> None:
+    print(profile_dir(a.name) / "auth.json")
+
+
+def cmd_refresh(a) -> None:
+    d = profile_dir(a.name)
+    auth_path = d / "auth.json"
+    auth = read_json(auth_path)
+    rt = ((auth or {}).get("tokens") or {}).get("refresh_token")
+    if not rt:
+        die("这个账号没有 refresh_token")
+    ident = identity(auth)
+    if not a.yes:
+        print(f"将用 refresh_token 为「{a.name}」（{ident['email'] or '?'}）换取新 token 并改写 {auth_path}。")
+        print("旧 refresh_token 可能随即失效：如果这份 auth.json 还拷到了别的机器，那边之后可能需要重新拷贝。")
+        if input("继续？[y/N] ").strip().lower() not in ("y", "yes"):
+            print("已取消")
+            return
+    body = json.dumps({"client_id": CLIENT_ID, "grant_type": "refresh_token", "refresh_token": rt,
+                       "scope": "openid profile email"}).encode()
+    req = urllib.request.Request(OAUTH_TOKEN_URL, data=body, method="POST",
+                                 headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            new = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        die(f"刷新失败 HTTP {e.code}: {e.read()[:300]!r}")
+    tokens = auth.setdefault("tokens", {})
+    for k in ("id_token", "access_token", "refresh_token"):
+        if new.get(k):
+            tokens[k] = new[k]
+    auth["last_refresh"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f") + "Z"
+    data = json.dumps(auth, indent=2, ensure_ascii=False).encode("utf-8")
+    atomic_write(auth_path, data)
+    m = main_auth()
+    if m and identity(m)["account_id"] == ident["account_id"]:
+        atomic_write(MAIN_AUTH, data)
+        print("  （该账号正在使用中，~/.codex/auth.json 也已同步）")
+    ident2 = identity(auth)
+    print(f"✓ 已刷新「{a.name}」，新 token 有效期至 {local(ident2['access_exp'])}")
+
+
+# ---------------------------------------------------------------- main
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="codex-acct", description="在一台机器上管理多个 Codex (ChatGPT) 登录。",
+                                formatter_class=argparse.RawDescriptionHelpFormatter,
+                                epilog=f"账号目录：{ACCOUNTS}\n主凭证：{MAIN_AUTH}")
+    sp = p.add_subparsers(dest="cmd", required=True)
+
+    s = sp.add_parser("add", help="用设备码在隔离的 CODEX_HOME 里登录一个新账号")
+    s.add_argument("name")
+    s.add_argument("--browser", action="store_true", help="用浏览器回调登录（默认设备码）")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(fn=cmd_add)
+
+    s = sp.add_parser("import", help="导入一份已有的 auth.json")
+    s.add_argument("name")
+    s.add_argument("file")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(fn=cmd_import)
+
+    s = sp.add_parser("save", help="把当前 ~/.codex/auth.json 保存为一个账号")
+    s.add_argument("name")
+    s.add_argument("--force", action="store_true")
+    s.set_defaults(fn=cmd_save)
+
+    s = sp.add_parser("list", help="列出所有账号")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_list)
+
+    s = sp.add_parser("use", help="把某个账号写入 ~/.codex/auth.json（切换主账号）")
+    s.add_argument("name")
+    s.set_defaults(fn=cmd_use)
+
+    s = sp.add_parser("current", help="显示 ~/.codex 当前登录的是谁")
+    s.set_defaults(fn=cmd_current)
+
+    s = sp.add_parser("status", help="拉取额度：剩余百分比、重置时间、重置次数")
+    s.add_argument("name", nargs="?")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_status)
+
+    s = sp.add_parser("run", help="不切换主账号，直接用某个账号运行 codex（CODEX_HOME 隔离，配置共享）")
+    s.add_argument("name")
+    s.add_argument("args", nargs=argparse.REMAINDER)
+    s.set_defaults(fn=cmd_run)
+
+    s = sp.add_parser("env", help="打印 export CODEX_HOME=... 供 eval")
+    s.add_argument("name")
+    s.set_defaults(fn=cmd_env)
+
+    s = sp.add_parser("path", help="打印某个账号的 auth.json 路径")
+    s.add_argument("name")
+    s.set_defaults(fn=cmd_path)
+
+    s = sp.add_parser("export", help="把某个账号的 auth.json 拷出来（给别的机器用）")
+    s.add_argument("name")
+    s.add_argument("dest", nargs="?")
+    s.set_defaults(fn=cmd_export)
+
+    s = sp.add_parser("sync", help="把 ~/.codex/auth.json 里刷新过的 token 同步回所属账号目录")
+    s.set_defaults(fn=cmd_sync)
+
+    s = sp.add_parser("refresh", help="（可选）显式刷新某个账号的 token")
+    s.add_argument("name")
+    s.add_argument("-y", "--yes", action="store_true")
+    s.set_defaults(fn=cmd_refresh)
+
+    s = sp.add_parser("remove", help="删除某个账号目录（不会远程退出登录）")
+    s.add_argument("name")
+    s.add_argument("-y", "--yes", action="store_true")
+    s.set_defaults(fn=cmd_remove)
+    return p
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    ACCOUNTS.mkdir(parents=True, exist_ok=True)
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

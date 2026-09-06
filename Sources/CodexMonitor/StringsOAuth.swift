@@ -1,0 +1,85 @@
+import Foundation
+
+/// Text for the browser (OAuth) login path, the device-code fallback and polling.
+extension L {
+    // Data source caption under the quota bars
+    static func sourceLive(_ t: String) -> String { "实时 · 来自 Codex 会话事件 \(t)" }
+    static func sourceAPI(_ t: String) -> String { "接口 · 上次拉取 \(t)" }
+
+    // Collapsible layout
+    static let collapsePanel = "折叠为小条（只显示当前账号）"
+    static let expandPanel = "展开面板"
+    static let collapseCard = "收起这个账号"
+    static let expandCard = "点击展开这个账号的详情"
+    static let dragHint = "按住拖动；点底部的箭头才会展开"
+    static func resetIn(_ countdown: String) -> String { "\(countdown)后重置" }
+
+    static func otherAccounts(_ n: Int) -> String { "其他账号 · \(n)" }
+    static let expandAll = "全部展开"
+    static let collapseAll = "全部收起"
+
+    // Per-account actions
+    static let accountActionsHelp = "复制 / 导出这个账号的 auth.json"
+    static let copyAuthJSON = "复制 auth.json 内容"
+    static let copyAuthPath = "复制 auth.json 路径"
+    static let revealInFinder = "在 Finder 中显示"
+    static let exportAuth = "导出 auth.json…"
+    static func copiedAuth(_ name: String) -> String { "已把「\(name)」的 auth.json 内容复制到剪贴板（含 token，注意保密）" }
+    static func copiedPath(_ path: String) -> String { "已复制路径 \(path)" }
+    static func exportedAuth(_ name: String, _ path: String) -> String { "已把「\(name)」的 auth.json 导出到 \(path)" }
+    static func copyFailed(_ err: String) -> String { "复制/导出失败：\(err)" }
+
+    // Re-login
+    static let reloginEllipsis = "重新登录此账号…"
+    static let reloginHelp = "会话被服务端作废时，用同一个目录重新走一遍登录，覆盖旧凭证"
+    static func reloginConfirmTitle(_ name: String) -> String { "重新登录「\(name)」？" }
+    static func reloginConfirmMessage(_ path: String) -> String { "登录成功后会覆盖 \(path)。请在浏览器里用同一个 ChatGPT 账号登录。" }
+    static let reloginAction = "重新登录"
+
+    // Polling
+    static func intervalLabel(seconds s: Int) -> String {
+        if s < 60 { return "\(s) 秒" }
+        return "\(s / 60) 分钟"
+    }
+    static let rateLimitedBackoff = "接口返回 429（请求过于频繁），自动刷新暂停 2 分钟；手动刷新不受影响"
+
+    // Login modes
+    static let loginSwitchToDevice = "改用设备码登录（远程 / 无浏览器时）"
+    static let loginSwitchToBrowser = "改用浏览器登录（推荐）"
+    static let loginRetryBrowser = "重试：浏览器登录"
+    static let loginRetryDevice = "重试：设备码登录"
+
+    // Browser flow
+    static let loginBrowserStep1 = "在浏览器里用要添加的 ChatGPT 账号登录"
+    static let loginBrowserHint = "推荐用隐身/无痕窗口打开：普通窗口会直接用当前已登录的 ChatGPT 账号。登录完成后页面会跳回本机 localhost:1455，这里会自动变成「登录成功」。这一步不需要在 ChatGPT 里开启任何设置。"
+    static let loginBrowserWaiting = "等待浏览器完成登录…"
+    static let loginExchanging = "已收到授权回调，正在换取 token…"
+
+    // Device-code flow
+    static let loginDeviceNeedsSetting = "设备码授权在 ChatGPT 里默认是关闭的：先用要添加的账号登录 ChatGPT，在「设置 → 安全」里打开 Codex 的「设备代码授权」，再来输入代码；否则会提示「请在 ChatGPT 安全设置中为 Codex 启用设备代码授权」。"
+    static let loginOpenSecuritySettings = "打开 ChatGPT 安全设置（隐身窗口）"
+
+    // OAuth errors
+    static let oauthPortBusy = "本机 1455 端口被占用（可能有另一个 codex login 或 Codex 登录流程正在进行），关掉后重试。"
+    static func oauthListenerFailed(_ m: String) -> String { "无法监听 localhost:1455：\(m)" }
+    static let oauthStateMismatch = "回调里的 state 不匹配，已忽略（可能来自别的登录流程）。"
+    static func oauthProviderError(_ code: String, _ desc: String?) -> String { "授权被拒绝：\(code)" + (desc.map { "（\($0)）" } ?? "") }
+    static func oauthTokenExchangeFailed(_ status: Int, _ body: String) -> String { "换取 token 失败（HTTP \(status)）" + (body.isEmpty ? "" : "：\(body)") }
+    static let oauthMissingTokens = "授权服务器没有返回完整的 token。"
+
+    // Pages shown in the browser after the redirect
+    static let oauthSuccessHTML = """
+    <!doctype html><html lang="zh"><head><meta charset="utf-8"><title>Codex 登录成功</title>
+    <style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f5f5f7;color:#1d1d1f}
+    .card{background:#fff;border-radius:16px;padding:40px 48px;box-shadow:0 8px 30px rgba(0,0,0,.08);text-align:center}h1{font-size:22px;margin:0 0 8px}p{margin:0;color:#6e6e73}</style></head>
+    <body><div class="card"><h1>登录成功</h1><p>凭证已保存到 Codex Monitor，可以关闭这个窗口了。</p></div></body></html>
+    """
+    static func oauthFailureHTML(_ err: String) -> String {
+        """
+        <!doctype html><html lang="zh"><head><meta charset="utf-8"><title>Codex 登录失败</title>
+        <style>body{font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#f5f5f7;color:#1d1d1f}
+        .card{background:#fff;border-radius:16px;padding:40px 48px;box-shadow:0 8px 30px rgba(0,0,0,.08);text-align:center}h1{font-size:22px;margin:0 0 8px}p{margin:0;color:#6e6e73}</style></head>
+        <body><div class="card"><h1>登录没有完成</h1><p>授权服务器返回：\(err)。回到 Codex Monitor 可以重试。</p></div></body></html>
+        """
+    }
+}
