@@ -69,6 +69,7 @@ def identity(auth: Optional[dict]) -> dict:
         "plan": a_id.get("chatgpt_plan_type") or a_acc.get("chatgpt_plan_type") or "",
         "account_id": tokens.get("account_id") or a_id.get("chatgpt_account_id") or a_acc.get("chatgpt_account_id") or "",
         "subscription_until": parse_iso(a_id.get("chatgpt_subscription_active_until")),
+        "subscription_checked": parse_iso(a_id.get("chatgpt_subscription_last_checked")),
         "access_expires": epoch(acc.get("exp")) if acc.get("exp") is not None else None,
         "last_refresh": parse_iso((auth or {}).get("last_refresh")),
         "auth_mode": (auth or {}).get("auth_mode") or ("apikey" if (auth or {}).get("OPENAI_API_KEY") else ""),

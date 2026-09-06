@@ -42,8 +42,12 @@ extension L {
     static func autoRefreshFailed(_ name: String, _ err: String) -> String { "「\(name)」自动刷新失败：\(err)" }
     static let sessionRevoked = "会话已被服务端作废（refresh_token 也失效），请「重新登录此账号」"
 
-    static let subscriptionRenewedPending = "已续期 · 新到期日待 token 刷新后显示"
+    static let subscriptionRenewedPending = "接口显示付费中 · 新周期需重新登录后显示"
     static let subscriptionEnded = "（已到期）"
+
+    static func checkedAtLogin(_ time: String) -> String { "登录时核验 \(time)" }
+    static let subscriptionSnapshotHelp = "订阅周期来自登录那一刻签发的 id_token；token 刷新不会重新核验，接口也不提供实时周期。重新登录此账号可刷新这个快照。"
+    static func credentialUntil(_ time: String) -> String { "至 \(time) · 10 天滚动" }
 
     // Polling
     static func intervalLabel(seconds s: Int) -> String {

@@ -666,6 +666,7 @@ struct AccountCard: View {
             HStack(alignment: .top, spacing: 8) {
                 infoCell(L.resetCredits, resetCreditsText, tint: nil)
                 infoCell(L.subscriptionExpiry, subscriptionText, tint: subscriptionTint)
+                    .help(L.subscriptionSnapshotHelp)
             }
             HStack(alignment: .top, spacing: 8) {
                 infoCell(L.tokenValidity, tokenExpiryText, tint: tokenTint)
@@ -695,15 +696,19 @@ struct AccountCard: View {
         return L.times(n)
     }
 
-    /// The id_token claim is a snapshot from the last token refresh; the API's plan_type is live.
+    /// The id_token claims describe the subscription as it was when the account *logged in*
+    /// (`chatgpt_subscription_last_checked`); token refreshes do not re-check it, and no endpoint
+    /// reachable with a Codex token returns the live billing period. So: show the snapshot, say
+    /// when it was taken, and let the live plan from the API override its meaning.
     private var subscriptionText: String {
         guard let d = identity?.subscriptionUntil else { return L.dash }
+        let checked = identity?.subscriptionLastChecked.map { L.checkedAtLogin(Fmt.dateTime.string(from: $0)) } ?? ""
         if d < Date() {
             let plan = (usage?.planType ?? "").lowercased()
             if !plan.isEmpty && plan != "free" { return L.subscriptionRenewedPending }
             return Fmt.dateTime.string(from: d) + L.subscriptionEnded
         }
-        return Fmt.dateTime.string(from: d) + L.paren(Fmt.daysLeft(until: d))
+        return Fmt.dateTime.string(from: d) + L.paren(Fmt.daysLeft(until: d)) + (checked.isEmpty ? "" : "\n" + checked)
     }
 
     private var subscriptionTint: Color? {
@@ -715,16 +720,17 @@ struct AccountCard: View {
         return d.timeIntervalSinceNow < 3 * 86400 ? .orange : nil
     }
 
+    /// Access tokens live 10 days and are renewed automatically (by Codex, and by the monitor
+    /// after a 401); this is the credential's age, not the account's validity.
     private var tokenExpiryText: String {
         guard let d = identity?.accessTokenExpiry else { return L.dash }
         if d < Date() { return Fmt.dateTime.string(from: d) + L.expired }
-        return Fmt.dateTime.string(from: d) + L.paren(Fmt.daysLeft(until: d))
+        return L.credentialUntil(Fmt.dateTime.string(from: d))
     }
 
     private var tokenTint: Color? {
         guard let d = identity?.accessTokenExpiry else { return nil }
-        if d < Date() { return .red }
-        return d.timeIntervalSinceNow < 2 * 86400 ? .orange : nil
+        return d < Date() ? .red : nil
     }
 
     private var lastRefreshText: String {

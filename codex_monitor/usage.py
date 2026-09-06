@@ -473,6 +473,7 @@ class AccountState:
             "reset_credits_earliest_expiry": earliest,
             "credits_balance": ((self.usage or {}).get("credits") or {}).get("balance") if ((self.usage or {}).get("credits") or {}).get("has_credits") else None,
             "subscription_until": self.ident.get("subscription_until"),
+            "subscription_checked": self.ident.get("subscription_checked"),
             "access_expires": self.ident.get("access_expires"),
             "access_expired": access_token_expired(self.ident),
             "last_refresh": self.ident.get("last_refresh"),

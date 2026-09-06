@@ -187,13 +187,13 @@ Layout:
 
 | Source | Used for | Frequency |
 |---|---|---|
-| `auth.json` (JWT claims) | email, plan, account id, subscription expiry, token validity | on change (polled every 10 s) |
+| `auth.json` (JWT claims) | email, plan, account id, **subscription period as checked at login** (`chatgpt_subscription_last_checked`), access-token lifetime | on change (polled every 10 s) |
 | `GET {chatgpt_base_url}/wham/usage` | rate-limit windows, per-model limits, credits, reset-credit count | every 30 s (configurable 15 s – 5 min) |
 | `GET …/wham/rate-limit-reset-credits` | reset coupons and their expiry | every 3 min |
 | `~/.codex/sessions/**/rollout-*.jsonl` (`token_count` events) | **real-time** rate limits after every model response of CLI / `codex exec` sessions — identical to what the Codex app shows | tailed every 1 s (only bytes appended to files modified in the last 15 min; every day directory is walked every 10 s because long-lived threads sit under their creation date) |
 | `$CODEX_HOME/logs_*.sqlite` rows `account/rateLimits/updated` | **trigger** for desktop-app usage: those threads no longer write rollouts, but the app-server logs one row per rate-limit update, so the usage API is fetched immediately | checked every 1 s (indexed query, ~20 ms) |
 
-**Latency budget** (measured on the author's machine): CLI/exec usage 0.2–1 s after the response (rollout tail); desktop-app usage ≈ 1.5–2.5 s (≤1 s to notice the log row + ~1.2 s usage-API round trip); usage from other devices or Codex Cloud only via the periodic poll (30 s default → 15 s average, 15 s if you pick the 15 s interval).
+**Latency budget** (measured on the author's machine while the desktop app was in use): responses recorded in a rollout file showed up in the panel **0.0–0.8 s** later; threads that no longer write rollouts are covered by the log trigger at ≈ 1.5–2.5 s (≤1 s to notice the row + ~1.2 s usage-API round trip); usage from other devices or Codex Cloud only via the periodic poll (30 s default → 15 s average; pick 15 s for 7.5 s).
 
 Live events win when they are newer than the last API fetch, or when the API still reports *less* usage for the same window than an event from the last 2 minutes (the usage endpoint can lag the per-response headers slightly). `~/.codex/sessions` is attributed to the active account (events before the last `auth.json` change are ignored); `~/.codex-accounts/<name>/sessions` to that account.
 
@@ -247,7 +247,9 @@ The Swift build happens in `~/Library/Caches/CodexMonitor/build` because iCloud-
 
 **A card shows an old plan / old numbers.** The account's token was probably rejected (401) and, if automatic refresh is off or the refresh token was revoked too, no fresh data can arrive; the yellow dot and the "cached data" note say so. Turn automatic refresh on, or use *Re-login…* on that account.
 
-**Subscription date says "renewed · new date appears after a token refresh".** The expiry date comes from the id_token issued at login; the plan comes live from the API. When the API says paid but the snapshot date is past, the subscription was renewed and the exact new date will show after the next token refresh.
+**The subscription date does not match what I just bought.** That field is a *snapshot taken when the account logged in* (`chatgpt_subscription_last_checked` in the id_token). Token refreshes do not re-check it and no endpoint reachable with a Codex token returns the live billing period, so the card labels it "snapshot at login" and shows the check time. The *plan* badge is live from the usage API. Re-login the account to refresh the snapshot.
+
+**"Credential (auto-renews) until …" — is my account expiring?** No. Access tokens live 10 days and Codex (and the monitor, after a 401) renews them automatically; the line only tells you how old the current credential is. It turns red only if a token is actually expired and could not be renewed.
 
 **The device-code page says to enable device code authorization.** Enable it under ChatGPT → Settings → Security for that account, or simply use the default browser login.
 

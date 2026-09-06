@@ -130,8 +130,9 @@ function card(a, collapsible){
   const rc = a.reset_credits == null ? '—' : `${a.reset_credits} ${t('times')}` + (a.reset_credits_earliest_expiry ? ` · ${t('earliest')} ${fmtDate(a.reset_credits_earliest_expiry)}` : '');
   const subPast = a.subscription_until && new Date(a.subscription_until) < Date.now();
   const paid = a.plan && a.plan.toLowerCase() !== 'free';
-  const sub = !a.subscription_until ? '—' : (subPast ? (paid ? t('subRenewed') : `${fmtDT(a.subscription_until)} (${t('subEnded')})`) : `${fmtDT(a.subscription_until)} (${daysLeft(a.subscription_until)})`);
-  const tok = a.access_expires ? `${fmtDT(a.access_expires)} (${a.access_expired ? t('expired') : daysLeft(a.access_expires)})` : '—';
+  const checked = a.subscription_checked ? `<div class="tiny muted">${t('checkedAtLogin')} ${fmtDT(a.subscription_checked)}</div>` : '';
+  const sub = !a.subscription_until ? '—' : (subPast ? (paid ? t('subRenewed') : `${fmtDT(a.subscription_until)} (${t('subEnded')})`) : `${fmtDT(a.subscription_until)} (${daysLeft(a.subscription_until)})${checked}`);
+  const tok = a.access_expires ? (a.access_expired ? `${fmtDT(a.access_expires)} (${t('expired')})` : `${t('until')} ${fmtDT(a.access_expires)} · ${t('rolling10d')}`) : '—';
   return `<div class="card ${a.active ? 'active' : ''}">
     <div class="row"><span class="dot" style="background:${statusColor(a)}"></span><span class="title" title="${esc(a.auth_path)}">${esc(a.display_name)}</span>${plan}<span style="flex:1"></span>${actionsMenu(a)}${right}</div>
     ${wins}${a.limit_reached ? `<div class="reached">${t('limitReached')}${a.limit_reached_detail ? ' ('+esc(a.limit_reached_detail)+')' : ''}</div>` : ''}${extras}${src}

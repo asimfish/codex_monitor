@@ -111,8 +111,8 @@ enum L {
     static func resetAt(_ time: String, _ countdown: String) -> String { "重置 \(time) · \(countdown)后" }
     static func resetShort(_ time: String) -> String { "重置 \(time)" }
     static let resetCredits = "重置次数"
-    static let subscriptionExpiry = "订阅到期"
-    static let tokenValidity = "Token 有效期"
+    static let subscriptionExpiry = "订阅周期（登录时快照）"
+    static let tokenValidity = "登录凭证（自动续期）"
     static let lastRefresh = "凭证最后刷新"
     static func times(_ n: Int) -> String { "\(n) 次" }
     static func timesWithExpiry(_ n: Int, _ date: String) -> String { "\(n) 次 · 最早 \(date) 到期" }
