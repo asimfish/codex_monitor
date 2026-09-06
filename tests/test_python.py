@@ -164,6 +164,72 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(st.view(now)["source"], "api")
 
 
+class AutoRefreshTests(unittest.TestCase):
+    """401 -> one refresh-token exchange -> retry, mirroring Codex; failures surface as 'session revoked'."""
+
+    def setUp(self):
+        now = datetime.now(timezone.utc)
+        self.dir = SANDBOX / "accounts" / "autoref"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self.auth_path = self.dir / "auth.json"
+        write(self.auth_path, make_auth("r@example.com", "acct-r", now))
+        self.orig_fetch, self.orig_refresh = usage.fetch_usage, oauth.refresh_tokens
+        os.environ.pop("CODEX_MONITOR_NO_AUTO_REFRESH", None)
+
+    def tearDown(self):
+        import shutil
+        usage.fetch_usage, oauth.refresh_tokens = self.orig_fetch, self.orig_refresh
+        os.environ.pop("CODEX_MONITOR_NO_AUTO_REFRESH", None)
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def test_refresh_then_retry(self):
+        calls = []
+
+        def fake_fetch(auth):
+            calls.append(auth["tokens"]["access_token"])
+            if len(calls) == 1:
+                raise usage.UsageError("token rejected (401)", 401)
+            return {"plan_type": "pro", "rate_limit": {}}
+
+        new_tokens = {"id_token": fake_jwt({"email": "r@example.com", "https://api.openai.com/auth": {"chatgpt_account_id": "acct-r", "chatgpt_plan_type": "pro"}}),
+                      "access_token": fake_jwt({"exp": 9999999999}), "refresh_token": "rt.rotated"}
+        usage.fetch_usage = fake_fetch
+        oauth.refresh_tokens = lambda rt: new_tokens
+        main_before = paths.main_auth_path().read_bytes() if paths.main_auth_path().exists() else None
+        u, auth, refreshed = usage.fetch_usage_auto(self.auth_path, also_main=False)
+        self.assertTrue(refreshed)
+        self.assertEqual(u["plan_type"], "pro")
+        self.assertEqual(len(calls), 2)
+        on_disk = json.loads(self.auth_path.read_text())
+        self.assertEqual(on_disk["tokens"]["refresh_token"], "rt.rotated")
+        self.assertEqual(on_disk["tokens"]["account_id"], "acct-r")
+        if main_before is not None:
+            self.assertEqual(paths.main_auth_path().read_bytes(), main_before, "main untouched when also_main=False")
+
+    def test_refresh_failure_is_reported_as_revoked(self):
+        usage.fetch_usage = lambda auth: (_ for _ in ()).throw(usage.UsageError("token rejected (401)", 401))
+        oauth.refresh_tokens = lambda rt: (_ for _ in ()).throw(oauth.OAuthError("refresh failed (HTTP 401)"))
+        with self.assertRaises(usage.UsageError) as cm:
+            usage.fetch_usage_auto(self.auth_path)
+        self.assertIn("session revoked", str(cm.exception))
+
+    def test_refresh_can_be_disabled(self):
+        usage.fetch_usage = lambda auth: (_ for _ in ()).throw(usage.UsageError("token rejected (401)", 401))
+        oauth.refresh_tokens = lambda rt: self.fail("must not refresh when disabled")
+        os.environ["CODEX_MONITOR_NO_AUTO_REFRESH"] = "1"
+        with self.assertRaises(usage.UsageError):
+            usage.fetch_usage_auto(self.auth_path)
+        os.environ.pop("CODEX_MONITOR_NO_AUTO_REFRESH")
+        with self.assertRaises(usage.UsageError):
+            usage.fetch_usage_auto(self.auth_path, allow_refresh=False)
+
+    def test_non_401_errors_do_not_refresh(self):
+        usage.fetch_usage = lambda auth: (_ for _ in ()).throw(usage.UsageError("HTTP 500", 500))
+        oauth.refresh_tokens = lambda rt: self.fail("must not refresh on non-401")
+        with self.assertRaises(usage.UsageError):
+            usage.fetch_usage_auto(self.auth_path)
+
+
 class OAuthTests(unittest.TestCase):
     def test_pkce_and_url(self):
         verifier, challenge = oauth.make_pkce()

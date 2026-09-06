@@ -128,12 +128,14 @@ function card(a, collapsible){
   const extras = a.extras.filter(x => x.windows.length).map(x => `<div class="tiny muted" style="margin-top:6px">${esc(x.name)} ${x.windows.map(w => `<span class="chip">${esc(wl(w.label))} ${t('left')} ${pct(w.remaining_percent)}</span>`).join('')}</div>`).join('');
   const src = a.source ? `<div class="tiny" style="margin-top:6px;color:${a.source==='live' ? 'var(--green)' : 'var(--muted)'}">${a.source==='live' ? t('sourceLive') : t('sourceApi')} ${fmtTime(a.source_at)}</div>` : '';
   const rc = a.reset_credits == null ? '—' : `${a.reset_credits} ${t('times')}` + (a.reset_credits_earliest_expiry ? ` · ${t('earliest')} ${fmtDate(a.reset_credits_earliest_expiry)}` : '');
-  const sub = a.subscription_until ? `${fmtDT(a.subscription_until)} (${daysLeft(a.subscription_until)})` : '—';
+  const subPast = a.subscription_until && new Date(a.subscription_until) < Date.now();
+  const paid = a.plan && a.plan.toLowerCase() !== 'free';
+  const sub = !a.subscription_until ? '—' : (subPast ? (paid ? t('subRenewed') : `${fmtDT(a.subscription_until)} (${t('subEnded')})`) : `${fmtDT(a.subscription_until)} (${daysLeft(a.subscription_until)})`);
   const tok = a.access_expires ? `${fmtDT(a.access_expires)} (${a.access_expired ? t('expired') : daysLeft(a.access_expires)})` : '—';
   return `<div class="card ${a.active ? 'active' : ''}">
     <div class="row"><span class="dot" style="background:${statusColor(a)}"></span><span class="title" title="${esc(a.auth_path)}">${esc(a.display_name)}</span>${plan}<span style="flex:1"></span>${actionsMenu(a)}${right}</div>
     ${wins}${a.limit_reached ? `<div class="reached">${t('limitReached')}${a.limit_reached_detail ? ' ('+esc(a.limit_reached_detail)+')' : ''}</div>` : ''}${extras}${src}
-    <div class="grid"><div><div class="k">${t('resetCredits')}</div><div class="v">${rc}</div></div><div><div class="k">${t('subscription')}</div><div class="v" style="${a.subscription_until && new Date(a.subscription_until) < Date.now() ? 'color:var(--orange)' : ''}">${sub}</div></div>
+    <div class="grid"><div><div class="k">${t('resetCredits')}</div><div class="v">${rc}</div></div><div><div class="k">${t('subscription')}</div><div class="v" style="${subPast && !paid ? 'color:var(--orange)' : ''}">${sub}</div></div>
     <div><div class="k">${t('tokenValid')}</div><div class="v" style="${a.access_expired ? 'color:var(--red)' : ''}">${tok}</div></div><div><div class="k">${t('lastRefresh')}</div><div class="v">${a.last_refresh ? new Date(a.last_refresh).toLocaleString() : '—'}</div></div></div>
     ${a.error ? `<div class="err">&#9888; ${esc(a.error)}${a.stale ? ' · ' + t('cached') : ''}</div>` : ''}
   </div>`;

@@ -87,6 +87,13 @@ final class QuotaMonitor: ObservableObject {
             scheduleTimer()
         }
     }
+    /// When the server rejects an access token (401), exchange the refresh token once, like Codex
+    /// itself does. A rejected token is already useless everywhere, so this cannot break a copy
+    /// on another machine; it only restores this one. Default on.
+    @Published var autoRefreshOn401: Bool {
+        didSet { UserDefaults.standard.set(autoRefreshOn401, forKey: "autoRefreshOn401") }
+    }
+    private var lastAutoRefreshAttempt: [String: Date] = [:]
 
     let store = ProfileStore.shared
     private var client: UsageClient
@@ -116,6 +123,7 @@ final class QuotaMonitor: ObservableObject {
             seconds = minutes > 0 ? min(minutes * 60, 300) : 30
         }
         refreshIntervalSeconds = seconds
+        autoRefreshOn401 = d.object(forKey: "autoRefreshOn401") as? Bool ?? true
         client = UsageClient(baseURL: ProfileStore.shared.chatGPTBaseURL())
     }
 
@@ -305,7 +313,7 @@ final class QuotaMonitor: ObservableObject {
         lastRefresh = Date()
     }
 
-    func refresh(entryId: String) async {
+    func refresh(entryId: String, allowAutoRefresh: Bool = true) async {
         guard let idx = entries.firstIndex(where: { $0.id == entryId }) else { return }
         let profile = entries[idx].profile
         guard profile.isChatGPTAuth, let token = profile.accessToken else {
@@ -313,8 +321,21 @@ final class QuotaMonitor: ObservableObject {
             return
         }
         if profile.identity?.accessTokenExpired == true {
+            if allowAutoRefresh {
+                switch await autoRefreshIfAllowed(entryId: entryId) {
+                case .refreshed:
+                    await refresh(entryId: entryId, allowAutoRefresh: false)
+                    return
+                case .failed:
+                    return
+                case .skipped:
+                    break
+                }
+            }
             let exp = profile.identity?.accessTokenExpiry.map { Fmt.dateTime.string(from: $0) } ?? "?"
-            entries[idx].error = L.tokenExpiredNeedRefresh(exp)
+            if let i = entries.firstIndex(where: { $0.id == entryId }) {
+                entries[i].error = L.tokenExpiredNeedRefresh(exp)
+            }
             return
         }
         entries[idx].isFetching = true
@@ -346,11 +367,56 @@ final class QuotaMonitor: ObservableObject {
                 backoffUntil = Date().addingTimeInterval(120)
                 log(L.rateLimitedBackoff)
             }
+            if let ue = error as? UsageError, ue.isAuthFailure, allowAutoRefresh {
+                if let i = entries.firstIndex(where: { $0.id == entryId }) { entries[i].isFetching = false }
+                switch await autoRefreshIfAllowed(entryId: entryId) {
+                case .refreshed:
+                    await refresh(entryId: entryId, allowAutoRefresh: false)
+                    return
+                case .failed:
+                    return  // error text already set to "session revoked"
+                case .skipped:
+                    break
+                }
+            }
             if let i = entries.firstIndex(where: { $0.id == entryId }) {
                 entries[i].error = (error as? UsageError)?.localizedDescription ?? error.localizedDescription
                 entries[i].isFetching = false
                 if entries[i].snapshot != nil { entries[i].isStale = true }
             }
+        }
+    }
+
+    private enum AutoRefreshOutcome { case refreshed, failed, skipped }
+
+    /// One refresh-token exchange per account per 10 minutes, only when enabled. On success the
+    /// new tokens are written to the profile (and to ~/.codex/auth.json when that profile is the
+    /// active one) and the profiles are reloaded so the retry uses them.
+    private func autoRefreshIfAllowed(entryId: String) async -> AutoRefreshOutcome {
+        guard autoRefreshOn401, let idx = entries.firstIndex(where: { $0.id == entryId }) else { return .skipped }
+        let entry = entries[idx]
+        let profile = entry.profile
+        guard let rt = profile.auth?.tokens?.refreshToken, !rt.isEmpty else { return .skipped }
+        let key = profile.accountId ?? profile.id
+        if let last = lastAutoRefreshAttempt[key], Date().timeIntervalSince(last) < 600 { return .skipped }
+        lastAutoRefreshAttempt[key] = Date()
+        do {
+            let refreshed = try await client.refreshTokens(refreshToken: rt)
+            try store.applyRefreshedTokens(refreshed, to: profile.authURL)
+            if entry.isActive, !profile.isMain {
+                try store.applyRefreshedTokens(refreshed, to: store.mainAuthURL)
+            }
+            log(L.autoRefreshed(profile.displayName))
+            reloadProfiles()
+            return .refreshed
+        } catch {
+            log(L.autoRefreshFailed(profile.displayName, error.localizedDescription))
+            if let i = entries.firstIndex(where: { $0.id == entryId }) {
+                entries[i].error = L.sessionRevoked
+                entries[i].isFetching = false
+                if entries[i].snapshot != nil { entries[i].isStale = true }
+            }
+            return .failed
         }
     }
 

@@ -31,6 +31,7 @@ class Monitor:
         self._main_auth_mtime: Optional[datetime] = None
         self._signature = ""
         self._credits_fetched: Dict[str, datetime] = {}
+        self._auto_refresh_at: Dict[str, datetime] = {}
         self._stop = threading.Event()
         self._threads: List[threading.Thread] = []
         self.login: Optional[object] = None
@@ -141,8 +142,16 @@ class Monitor:
             with self.lock:
                 st.error = "auth.json unreadable"
             return
+        # at most one automatic refresh-token exchange per account per 10 minutes
+        last_try = self._auto_refresh_at.get(acct)
+        allow_refresh = last_try is None or (now_utc() - last_try).total_seconds() > 600
         try:
-            u = usage.fetch_usage(auth)
+            u, auth, refreshed = usage.fetch_usage_auto(Path(st.auth_path), also_main=st.active and not st.is_main,
+                                                        allow_refresh=allow_refresh)
+            if refreshed:
+                self._auto_refresh_at[acct] = now_utc()
+                self.note(f"token for {st.display_name} was rejected; refreshed it automatically (like Codex does)")
+                st.ident = identity(auth)
             credits = usage.fetch_reset_credits(auth) if need_credits else None
             fetched = now_utc()
             with self.lock:
@@ -154,6 +163,8 @@ class Monitor:
         except UsageError as e:
             with self.lock:
                 st.error = str(e)
+                if e.status == 401 and allow_refresh:
+                    self._auto_refresh_at[acct] = now_utc()
                 if e.status == 429:
                     self.backoff_until = now_utc() + timedelta(seconds=120)
                     self.note("HTTP 429: pausing automatic refresh for 2 minutes")

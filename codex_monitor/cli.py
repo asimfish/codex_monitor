@@ -206,8 +206,11 @@ def cmd_status(a: argparse.Namespace) -> None:
         st = usage.AccountState(name=p.name, display_name=p.display_name, active=bool(main_acct and p.account_id == main_acct),
                                 is_main=p.is_main, auth_path=str(p.auth_path), ident=p.ident)
         try:
-            st.usage = usage.fetch_usage(p.auth or {})
-            st.credits = usage.fetch_reset_credits(p.auth or {})
+            st.usage, auth, refreshed = usage.fetch_usage_auto(p.auth_path, also_main=st.active and not p.is_main)
+            if refreshed:
+                st.ident = identity(auth)
+                print(f"~ token for '{p.name}' was rejected; refreshed it automatically", file=sys.stderr)
+            st.credits = usage.fetch_reset_credits(auth)
             st.fetched_at = now_utc()
         except usage.UsageError as e:
             st.error = str(e)
@@ -302,6 +305,8 @@ def cmd_refresh(a: argparse.Namespace) -> None:
 
 def cmd_serve(a: argparse.Namespace) -> None:
     from .web import serve
+    if a.no_auto_refresh:
+        os.environ["CODEX_MONITOR_NO_AUTO_REFRESH"] = "1"
     mode = "none" if a.no_browser else ("app" if a.app else "tab")
     serve(port=a.port, interval=a.interval, open_browser=mode, host=a.host, quiet=not a.verbose)
 
@@ -336,6 +341,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--app", action="store_true", help="open as a chromeless app window (Chromium browsers)")
     s.add_argument("--no-browser", action="store_true", help="do not open a browser")
     s.add_argument("--verbose", action="store_true")
+    s.add_argument("--no-auto-refresh", action="store_true", help="never exchange refresh tokens, even after a 401 (default: one attempt per account per 10 min)")
     s.set_defaults(fn=cmd_serve)
 
     s = sp.add_parser("autostart", help="start the dashboard at login (LaunchAgent / systemd / Task Scheduler)")

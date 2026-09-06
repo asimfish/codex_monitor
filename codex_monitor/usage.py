@@ -55,6 +55,39 @@ def fetch_usage(auth: dict) -> dict:
     return _get("/wham/usage", token, ident["account_id"])
 
 
+def auto_refresh_enabled() -> bool:
+    return os.environ.get("CODEX_MONITOR_NO_AUTO_REFRESH") != "1"
+
+
+def fetch_usage_auto(auth_path: Path, also_main: bool = False, allow_refresh: bool = True) -> Tuple[dict, dict, bool]:
+    """Fetch usage for the auth.json at `auth_path`. When the server rejects the token (401) or it
+    has expired locally, exchange the refresh token once - exactly what Codex itself does - write
+    the new tokens back (also to ~/.codex/auth.json when `also_main`), and retry.
+
+    Returns (usage, auth, refreshed). Raises UsageError; a failed refresh raises a UsageError whose
+    message says the session was revoked."""
+    from .store import read_json
+    auth = read_json(auth_path) or {}
+    try:
+        return fetch_usage(auth), auth, False
+    except UsageError as e:
+        if e.status != 401 or not allow_refresh or not auto_refresh_enabled():
+            raise
+        rt = (auth.get("tokens") or {}).get("refresh_token")
+        if not rt:
+            raise
+        from .oauth import OAuthError, apply_refreshed, refresh_tokens
+        try:
+            new = refresh_tokens(rt)
+        except OAuthError as oe:
+            raise UsageError(f"session revoked: token rejected and refresh failed ({oe}); re-login this account", 401) from oe
+        apply_refreshed(auth_path, new)
+        if also_main:
+            apply_refreshed(paths.main_auth_path(), new)
+        auth = read_json(auth_path) or {}
+        return fetch_usage(auth), auth, True
+
+
 def fetch_reset_credits(auth: dict) -> Optional[dict]:
     tokens = auth.get("tokens") or {}
     token = tokens.get("access_token")

@@ -428,6 +428,7 @@ struct WidgetView: View {
             get: { launchAtLogin },
             set: { on in setLaunchAtLogin(on) }
         ))
+        Toggle(L.autoRefreshToggle, isOn: $monitor.autoRefreshOn401)
         Divider()
         Button(L.addAccountEllipsis) { addAccount() }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
@@ -694,15 +695,23 @@ struct AccountCard: View {
         return L.times(n)
     }
 
+    /// The id_token claim is a snapshot from the last token refresh; the API's plan_type is live.
     private var subscriptionText: String {
         guard let d = identity?.subscriptionUntil else { return L.dash }
-        if d < Date() { return Fmt.dateTime.string(from: d) + L.expiredPendingRefresh }
+        if d < Date() {
+            let plan = (usage?.planType ?? "").lowercased()
+            if !plan.isEmpty && plan != "free" { return L.subscriptionRenewedPending }
+            return Fmt.dateTime.string(from: d) + L.subscriptionEnded
+        }
         return Fmt.dateTime.string(from: d) + L.paren(Fmt.daysLeft(until: d))
     }
 
     private var subscriptionTint: Color? {
         guard let d = identity?.subscriptionUntil else { return nil }
-        if d < Date() { return .orange }
+        if d < Date() {
+            let plan = (usage?.planType ?? "").lowercased()
+            return (!plan.isEmpty && plan != "free") ? nil : .orange
+        }
         return d.timeIntervalSinceNow < 3 * 86400 ? .orange : nil
     }
 

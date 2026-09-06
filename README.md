@@ -1,6 +1,6 @@
 # Codex Monitor 📊
 
-**Quota dashboard + multi-account manager for OpenAI Codex — see every account's remaining quota, reset time and reset credits in real time, and add or switch ChatGPT accounts without ever touching your tokens unless you ask.**
+**Quota dashboard + multi-account manager for OpenAI Codex — see every account's remaining quota, reset time and reset credits in real time, and add or switch ChatGPT accounts without your tokens being rewritten behind your back.**
 
 Runs everywhere Codex CLI runs: a native floating widget on **macOS**, and a local web dashboard + CLI (Python, standard library only) on **macOS, Linux and Windows**.
 
@@ -13,7 +13,7 @@ Runs everywhere Codex CLI runs: a native floating widget on **macOS**, and a loc
 </p>
 <p align="center"><sub>Left: native macOS widget · Middle: web dashboard, identical on every OS · Right: the widget collapsed to a strip</sub></p>
 
-[![macOS · Linux · Windows](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-4c8eda?style=flat)](#3--quick-start) · [![macOS 14+ native widget](https://img.shields.io/badge/native%20widget-macOS%2014%2B-000000?style=flat&logo=apple&logoColor=white)](#3--quick-start) · [![Swift 5 · SwiftUI](https://img.shields.io/badge/Swift-5%20%C2%B7%20SwiftUI-F05138?style=flat&logo=swift&logoColor=white)](Sources/CodexMonitor) · [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B%20%C2%B7%20stdlib%20only-3776AB?style=flat&logo=python&logoColor=white)](codex_monitor) · [![Read-only by design](https://img.shields.io/badge/tokens-read--only%20by%20design-2ea44f?style=flat)](#6--how-it-works) · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE) · [🇨🇳 中文说明](README_CN.md)
+[![macOS · Linux · Windows](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-4c8eda?style=flat)](#3--quick-start) · [![macOS 14+ native widget](https://img.shields.io/badge/native%20widget-macOS%2014%2B-000000?style=flat&logo=apple&logoColor=white)](#3--quick-start) · [![Swift 5 · SwiftUI](https://img.shields.io/badge/Swift-5%20%C2%B7%20SwiftUI-F05138?style=flat&logo=swift&logoColor=white)](Sources/CodexMonitor) · [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B%20%C2%B7%20stdlib%20only-3776AB?style=flat&logo=python&logoColor=white)](codex_monitor) · [![No token churn](https://img.shields.io/badge/tokens-no%20scheduled%20refresh-2ea44f?style=flat)](#6--how-it-works) · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE) · [🇨🇳 中文说明](README_CN.md)
 
 🈶 *The web dashboard is bilingual (English / 中文, follows your browser). The native macOS widget's text is Chinese; every string lives in [`Sources/CodexMonitor/Strings*.swift`](Sources/CodexMonitor), so an English localisation is a small PR.*
 
@@ -196,7 +196,11 @@ Live events win when they are newer than the last API fetch, or when the API sti
 
 **Read-only guarantees**
 
-The widget never calls the OAuth refresh endpoint and never writes any `auth.json` on its own. The only writes are user-initiated: *Switch*, *Save as account*, *Refresh token…* (confirmation dialog; the button only appears when a token is expired/rejected), *Re-login…*, and the one-way "adopt" copy that mirrors a `~/.codex/auth.json` Codex itself just refreshed into the matching account directory (no network involved).
+Codex Monitor does not refresh tokens on a schedule and never rewrites a *working* `auth.json`. Writes happen only in these cases:
+
+- user actions: *Switch*, *Save as account*, *Refresh token…*, *Re-login…*;
+- the one-way "adopt" copy that mirrors a `~/.codex/auth.json` Codex itself just refreshed into the matching account directory (no network involved);
+- **automatic refresh after a 401**: when the server rejects an access token (or it has expired), the refresh token is exchanged **once per account per 10 minutes** and the fetch is retried — exactly what Codex does on a 401. A rejected token is already dead everywhere, so this cannot break a copy on another machine; without it a revoked session would keep showing stale numbers forever (the plan badge stuck on an old value, for example). Disable with the widget's *401 时自动刷新* toggle, `codex-monitor serve --no-auto-refresh`, or `CODEX_MONITOR_NO_AUTO_REFRESH=1`. If the refresh itself fails the card says the session was revoked and offers *Re-login*.
 
 **Two implementations, one behaviour.** The Swift widget and the Python package implement the same store layout, the same API calls, the same rollout tailing and the same OAuth flow; both are covered by the tests in `tests/`. Proxies: the Python side honours `HTTPS_PROXY`/`HTTP_PROXY`, the macOS system proxy (`scutil --proxy`) and the Windows registry proxy; the widget uses the system proxy through URLSession.
 
@@ -238,7 +242,9 @@ The Swift build happens in `~/Library/Caches/CodexMonitor/build` because iCloud-
 
 ## 9. ❓ FAQ
 
-**The widget shows "Token expired/rejected (401)" although the token's `exp` is in the future.** The session was revoked server-side (password change, "log out of all devices", plan change …). Use *Re-login…* on that account.
+**A card shows an old plan / old numbers.** The account's token was probably rejected (401) and, if automatic refresh is off or the refresh token was revoked too, no fresh data can arrive; the yellow dot and the "cached data" note say so. Turn automatic refresh on, or use *Re-login…* on that account.
+
+**Subscription date says "renewed · new date appears after a token refresh".** The expiry date comes from the id_token issued at login; the plan comes live from the API. When the API says paid but the snapshot date is past, the subscription was renewed and the exact new date will show after the next token refresh.
 
 **The device-code page says to enable device code authorization.** Enable it under ChatGPT → Settings → Security for that account, or simply use the default browser login.
 

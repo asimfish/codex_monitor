@@ -1,6 +1,6 @@
 # Codex Monitor 📊
 
-**Codex 额度看板 + 多账号管理器：实时看到每个账号的剩余额度、重置时间、重置次数，在一台机器上添加/切换多个 ChatGPT 账号——除非你主动操作，它永远不会碰你的 token。**
+**Codex 额度看板 + 多账号管理器：实时看到每个账号的剩余额度、重置时间、重置次数，在一台机器上添加/切换多个 ChatGPT 账号——不会在你背后改写 token。**
 
 Codex CLI 能跑的地方它都能跑：**macOS** 上是原生桌面悬窗；**macOS / Linux / Windows** 上都有本地网页仪表盘 + 命令行（Python，仅标准库）。
 
@@ -13,7 +13,7 @@ Codex CLI 能跑的地方它都能跑：**macOS** 上是原生桌面悬窗；**m
 </p>
 <p align="center"><sub>左：macOS 原生悬窗 · 中：网页仪表盘，三个系统一样 · 右：悬窗折叠成竖条</sub></p>
 
-[![macOS · Linux · Windows](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-4c8eda?style=flat)](#3--快速开始) · [![macOS 14+ 原生悬窗](https://img.shields.io/badge/native%20widget-macOS%2014%2B-000000?style=flat&logo=apple&logoColor=white)](#3--快速开始) · [![Swift 5 · SwiftUI](https://img.shields.io/badge/Swift-5%20%C2%B7%20SwiftUI-F05138?style=flat&logo=swift&logoColor=white)](Sources/CodexMonitor) · [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B%20%C2%B7%20%E4%BB%85%E6%A0%87%E5%87%86%E5%BA%93-3776AB?style=flat&logo=python&logoColor=white)](codex_monitor) · [![只读设计](https://img.shields.io/badge/token-%E5%8F%AA%E8%AF%BB%EF%BC%8C%E4%B8%8D%E4%B8%BB%E5%8A%A8%E5%88%B7%E6%96%B0-2ea44f?style=flat)](#6--工作原理) · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE) · [🇬🇧 English](README.md)
+[![macOS · Linux · Windows](https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Linux%20%C2%B7%20Windows-4c8eda?style=flat)](#3--快速开始) · [![macOS 14+ 原生悬窗](https://img.shields.io/badge/native%20widget-macOS%2014%2B-000000?style=flat&logo=apple&logoColor=white)](#3--快速开始) · [![Swift 5 · SwiftUI](https://img.shields.io/badge/Swift-5%20%C2%B7%20SwiftUI-F05138?style=flat&logo=swift&logoColor=white)](Sources/CodexMonitor) · [![Python 3.8+](https://img.shields.io/badge/Python-3.8%2B%20%C2%B7%20%E4%BB%85%E6%A0%87%E5%87%86%E5%BA%93-3776AB?style=flat&logo=python&logoColor=white)](codex_monitor) · [![不主动刷新](https://img.shields.io/badge/token-%E4%B8%8D%E6%8C%89%E8%AE%A1%E5%88%92%E5%88%B7%E6%96%B0-2ea44f?style=flat)](#6--工作原理) · [![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=flat)](LICENSE) · [🇬🇧 English](README.md)
 
 💡 *Codex Monitor 读的是 Codex CLI / 桌面端同一份 `auth.json`，调的是同样的只读用量接口，tail 的是同一份会话日志——所以数字和 Codex 里显示的一致，而且是实时的。*
 
@@ -194,7 +194,11 @@ codex-monitor refresh work          # （可选，需确认）显式刷新 token
 
 **只读保证**
 
-悬窗从不调用 OAuth refresh 接口，也从不主动改写任何 `auth.json`。仅有的写操作都由你触发：「切换」「存为账号」「刷新 Token…」（弹窗确认；按钮只在 token 过期/失效时出现）「重新登录…」，以及单向的「回流」复制——把 Codex 自己刚刷新过的 `~/.codex/auth.json` 复制进对应账号目录（不涉及网络）。
+Codex Monitor 不会按计划刷新 token，也从不改写一份*还能用*的 `auth.json`。只有这几种情况会写文件：
+
+- 你的操作：「切换」「存为账号」「刷新 Token…」「重新登录…」；
+- 单向「回流」复制：把 Codex 自己刚刷新过的 `~/.codex/auth.json` 复制进对应账号目录（不涉及网络）；
+- **401 后的自动刷新**：服务端拒绝 access token（或它已过期）时，用 refresh_token 换新一次（**每账号每 10 分钟最多一次**）并重试——这正是 Codex 遇到 401 时的做法。被拒绝的 token 在任何机器上都已经没用了，所以这一步不可能破坏别处的副本；没有它，被作废的会话会永远显示旧数据（比如套餐徽章卡在旧值）。可关闭：悬窗菜单「Token 被拒绝(401)时自动刷新一次」、`codex-monitor serve --no-auto-refresh`，或环境变量 `CODEX_MONITOR_NO_AUTO_REFRESH=1`。如果刷新本身也失败，卡片会提示会话已作废并给出「重新登录」。
 
 **两套实现，一种行为。** Swift 悬窗和 Python 包实现的是同一套目录布局、同样的接口调用、同样的 rollout tail 和同样的 OAuth 流程，`tests/` 里都有覆盖。代理：Python 端支持 `HTTPS_PROXY`/`HTTP_PROXY`、macOS 系统代理（`scutil --proxy`）和 Windows 注册表代理；悬窗通过 URLSession 使用系统代理。
 
@@ -236,7 +240,9 @@ Swift 构建放在 `~/Library/Caches/CodexMonitor/build`：iCloud 同步的目�
 
 ## 9. ❓ 常见问题
 
-**卡片显示「Token 失效/过期（401）」，但 token 的 `exp` 还没到。** 会话被服务端作废了（改密码、「退出所有设备」、套餐变动……）。对该账号用「重新登录…」。
+**某个账号显示的是旧套餐 / 旧数字。** 它的 token 很可能被拒绝了（401）；如果关闭了自动刷新，或 refresh_token 也被作废，就拿不到新数据——黄点和「显示的是缓存数据」就是这个意思。打开自动刷新，或对该账号用「重新登录…」。
+
+**订阅到期显示「已续期 · 新到期日待 token 刷新后显示」。** 到期日来自登录时签发的 id_token 快照，套餐则是接口实时给的：接口说是付费套餐但快照日期已过，说明订阅已续期，精确的新日期要等下次 token 刷新后才有。
 
 **设备码页面提示要开启设备代码授权。** 到该账号的 ChatGPT → 设置 → 安全 里打开，或者直接用默认的浏览器登录。
 

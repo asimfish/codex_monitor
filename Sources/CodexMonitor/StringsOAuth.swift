@@ -36,6 +36,15 @@ extension L {
     static func reloginConfirmMessage(_ path: String) -> String { "登录成功后会覆盖 \(path)。请在浏览器里用同一个 ChatGPT 账号登录。" }
     static let reloginAction = "重新登录"
 
+    // Automatic refresh on 401
+    static let autoRefreshToggle = "Token 被拒绝(401)时自动刷新一次"
+    static func autoRefreshed(_ name: String) -> String { "「\(name)」的 token 被服务端拒绝，已用 refresh_token 自动换新并重新拉取" }
+    static func autoRefreshFailed(_ name: String, _ err: String) -> String { "「\(name)」自动刷新失败：\(err)" }
+    static let sessionRevoked = "会话已被服务端作废（refresh_token 也失效），请「重新登录此账号」"
+
+    static let subscriptionRenewedPending = "已续期 · 新到期日待 token 刷新后显示"
+    static let subscriptionEnded = "（已到期）"
+
     // Polling
     static func intervalLabel(seconds s: Int) -> String {
         if s < 60 { return "\(s) 秒" }
