@@ -224,7 +224,7 @@ codex_monitor/          Python 包（仅标准库，3.8+）：账号存储、用
 bin/codex-monitor       克隆后直接运行命令行（bin/codex-acct 是同一个东西）
 Sources/CodexMonitor/   Swift（SwiftUI + AppKit）原生悬窗；Strings*.swift 是全部文案
 scripts/build.sh        swiftc 编译 + ad-hoc 签名；scripts/install.sh / uninstall.sh
-tests/test_python.py    17 个单元/集成测试：解析、tail、视图、OAuth（伪造回调）、Web API、模拟的 Windows 分支
+tests/test_python.py    22 个单元/集成测试：解析、tail、视图、OAuth（伪造回调）、401 自动刷新、app-server 日志触发器、Web API、模拟的 Windows 分支
 tests/test_cli.py       命令行沙盒端到端测试（临时 CODEX_HOME、伪造 JWT、不联网）
 tests/linux_smoke.sh    Docker 检查跑的脚本：测试 + pip 安装 + 仪表盘启动 + Linux 自启
 tests/run_store_tests.sh  Swift 测试（macOS）

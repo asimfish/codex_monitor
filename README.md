@@ -226,7 +226,7 @@ codex_monitor/          Python package (stdlib only, 3.8+): store, usage API + r
 bin/codex-monitor       run the CLI straight from a checkout (bin/codex-acct is the same thing)
 Sources/CodexMonitor/   Swift (SwiftUI + AppKit) native widget; Strings*.swift hold all its text
 scripts/build.sh        swiftc build + ad-hoc codesign;  scripts/install.sh / uninstall.sh
-tests/test_python.py    17 unit/integration tests: parsing, tailer, views, OAuth (fake callback), web API, simulated Windows branches
+tests/test_python.py    22 unit/integration tests: parsing, tailer, views, OAuth (fake callback), auto-refresh on 401, app-server log trigger, web API, simulated Windows branches
 tests/test_cli.py       sandboxed end-to-end test of the CLI (temp CODEX_HOME, fake JWTs, no network)
 tests/linux_smoke.sh    what the Docker check runs: tests + pip install + dashboard boot + autostart on Linux
 tests/run_store_tests.sh  Swift tests (macOS)
