@@ -8,6 +8,21 @@ private struct SizePreferenceKey: PreferenceKey {
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) { value = nextValue() }
 }
 
+private struct SectionHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGFloat] = [:]
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private extension View {
+    func measureSectionHeight(_ section: String) -> some View {
+        background(GeometryReader { geo in
+            Color.clear.preference(key: SectionHeightPreferenceKey.self, value: [section: geo.size.height])
+        })
+    }
+}
+
 struct WidgetRootView: View {
     @ObservedObject var monitor: QuotaMonitor
     @ObservedObject var controller: PanelController
@@ -274,6 +289,7 @@ struct WidgetView: View {
     @ObservedObject var controller: PanelController
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var showLog = false
+    @State private var sectionHeights: [String: CGFloat] = [:]
     /// Non-active accounts the user has expanded; the active one is always a full card.
     @State private var expanded: Set<String> = []
     /// Remembered "show all other accounts expanded" preference (on by default; the
@@ -286,35 +302,53 @@ struct WidgetView: View {
     var body: some View {
         let _ = monitor.clockTick
         VStack(alignment: .leading, spacing: 8) {
-            header
-            if monitor.entries.isEmpty {
-                emptyState
-            } else {
-                ForEach(monitor.entries.filter { $0.isActive }) { entry in
-                    AccountCard(entry: entry, monitor: monitor, controller: controller, onCollapse: nil)
-                }
-                if !otherIds.isEmpty {
-                    othersHeader
-                }
-                ForEach(monitor.entries.filter { !$0.isActive }) { entry in
-                    if expanded.contains(entry.id) {
-                        AccountCard(
-                            entry: entry, monitor: monitor, controller: controller,
-                            onCollapse: { expanded.remove(entry.id) }
-                        )
-                    } else {
-                        CompactAccountRow(
-                            entry: entry,
-                            monitor: monitor,
-                            onExpand: { expanded.insert(entry.id) },
-                            onSwitch: { confirmSwitch(to: entry) }
-                        )
+            VStack(alignment: .leading, spacing: 8) {
+                header
+                if monitor.entries.isEmpty {
+                    emptyState
+                } else {
+                    ForEach(monitor.entries.filter { $0.isActive }) { entry in
+                        AccountCard(entry: entry, monitor: monitor, controller: controller, onCollapse: nil)
                     }
+                    if !otherIds.isEmpty { othersHeader }
                 }
             }
-            footer
-            if showLog { logView }
+            .measureSectionHeight("top")
+
+            if !otherIds.isEmpty {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(monitor.entries.filter { !$0.isActive }) { entry in
+                            if expanded.contains(entry.id) {
+                                AccountCard(
+                                    entry: entry, monitor: monitor, controller: controller,
+                                    onCollapse: { expanded.remove(entry.id) }
+                                )
+                            } else {
+                                CompactAccountRow(
+                                    entry: entry,
+                                    monitor: monitor,
+                                    onExpand: { expanded.insert(entry.id) },
+                                    onSwitch: { confirmSwitch(to: entry) }
+                                )
+                            }
+                        }
+                    }
+                    .padding(.trailing, 12)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .measureSectionHeight("others")
+                }
+                .scrollIndicators(.visible)
+                .frame(height: min(sectionHeights["others", default: 0], otherAccountsMaxHeight))
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                footer
+                if showLog { logView }
+            }
+            .measureSectionHeight("bottom")
         }
+        .onPreferenceChange(SectionHeightPreferenceKey.self) { sectionHeights = $0 }
         .onAppear {
             if othersExpandedByDefault { expanded.formUnion(otherIds) }
         }
@@ -328,6 +362,13 @@ struct WidgetView: View {
                 .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
         )
         .padding(2)
+    }
+
+    private var otherAccountsMaxHeight: CGFloat {
+        // Reserve the fixed sections, 32 pt outer padding and two 8 pt gaps.
+        max(80, min(420, controller.maximumHeight
+            - sectionHeights["top", default: 0]
+            - sectionHeights["bottom", default: 0] - 48))
     }
 
     private var header: some View {

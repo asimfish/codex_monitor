@@ -40,6 +40,7 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
     static let stripWidth: CGFloat = 46
 
     @Published private(set) var isVisible = false
+    @Published private(set) var maximumHeight: CGFloat = 700
     @Published var mode: WindowMode {
         didSet {
             UserDefaults.standard.set(mode.rawValue, forKey: "windowMode")
@@ -92,6 +93,7 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
         panel = p
         applyMode()
         restoreOrigin()
+        updateMaximumHeight()
 
         if UserDefaults.standard.object(forKey: "panelVisible") as? Bool ?? true {
             show()
@@ -166,6 +168,9 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
         frame.size = new
         frame.origin.y = topY - new.height
         frame.origin.x = anchorRight ? oldMaxX - new.width : oldMinX
+        if let visible = p.screen?.visibleFrame {
+            frame.origin.y = max(visible.minY + 12, min(frame.origin.y, visible.maxY - new.height - 12))
+        }
         p.setFrame(frame, display: true, animate: false)
     }
 
@@ -184,6 +189,20 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
             let vf = screen.visibleFrame
             p.setFrameOrigin(NSPoint(x: vf.maxX - p.frame.width - 24, y: vf.maxY - p.frame.height - 24))
         }
+    }
+
+    private func updateMaximumHeight() {
+        if let screen = panel?.screen ?? NSScreen.main {
+            maximumHeight = screen.visibleFrame.height - 24
+        }
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        updateMaximumHeight()
+    }
+
+    func windowDidChangeScreenProfile(_ notification: Notification) {
+        updateMaximumHeight()
     }
 
     func windowDidMove(_ notification: Notification) {
