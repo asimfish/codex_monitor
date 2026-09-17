@@ -28,7 +28,7 @@ extension L {
     static func accountPosition(_ n: Int) -> String { "第 \(n) 位" }
 
     // Per-account actions
-    static let accountActionsHelp = "复制 / 导出这个账号的 auth.json"
+    static let accountActionsHelp = "账号操作：复制、导出、重新登录或退出登录"
     static let copyAuthJSON = "复制 auth.json 内容"
     static let copyAuthPath = "复制 auth.json 路径"
     static let revealInFinder = "在 Finder 中显示"
@@ -39,6 +39,13 @@ extension L {
     static func copyFailed(_ err: String) -> String { "复制/导出失败：\(err)" }
 
     static func savedLoginExists(_ name: String) -> String { "账号「\(name)」已有登录凭证，请从账号菜单选择“重新登录此账号”。" }
+
+    static let logoutAction = "退出登录"
+    static func logoutTitle(_ name: String) -> String { "退出「\(name)」？" }
+    static let logoutMessage = "将移除该账号在本机的登录凭证（包括重复存档）；如果它是当前使用账号，也会清除 Codex 当前登录。保留配置、会话记录和历史备份，不会退出其他设备或浏览器。正在运行的 Codex 进程可能仍持有凭证，请自行关闭。之后可用原名称重新添加。"
+    static let logoutAccountChanged = "账号凭证已变化，请刷新列表后重试。"
+    static let logoutLoginRunning = "请先完成或取消正在进行的登录，再退出账号。"
+    static func loggedOut(_ name: String) -> String { "已在本机退出「\(name)」" }
 
     // Re-login
     static let reloginEllipsis = "重新登录此账号…"

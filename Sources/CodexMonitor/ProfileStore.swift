@@ -193,6 +193,28 @@ final class ProfileStore {
         }
     }
 
+    static func sameLogin(_ lhs: Profile, _ rhs: Profile) -> Bool {
+        guard let account = lhs.accountId, !account.isEmpty, account == rhs.accountId else { return false }
+        if let user = lhs.identity?.userId, !user.isEmpty,
+           let other = rhs.identity?.userId, !other.isEmpty { return user == other }
+        guard let email = lhs.email, !email.isEmpty, let other = rhs.email else { return false }
+        return email.lowercased() == other.lowercased()
+    }
+
+    // Remove only live credential files. Preserve directories, sessions and configuration.
+    func signOut(_ profile: Profile) throws {
+        let candidates = loadProfiles() + (loadMain().map { [$0] } ?? [])
+        let targets = candidates.filter {
+            Self.sameLogin($0, profile) || ($0.authURL == profile.authURL && $0.signature == profile.signature)
+        }
+        guard !targets.isEmpty else { throw StoreError.io(L.logoutAccountChanged) }
+        for target in targets {
+            let current = load(id: target.id, name: target.name, directory: target.directory, isMain: target.isMain)
+            guard current.signature == target.signature else { throw StoreError.io(L.logoutAccountChanged) }
+            try FileManager.default.removeItem(at: target.authURL)
+        }
+    }
+
     // MARK: Switching
 
     /// Make `profile` the active login by copying its auth.json over `$CODEX_HOME/auth.json`.
@@ -255,12 +277,15 @@ final class ProfileStore {
     // MARK: Token refresh persistence
 
     /// Replace the token fields of an auth.json in place, preserving unknown keys.
-    func applyRefreshedTokens(_ refreshed: TokenRefreshResponse, to url: URL) throws {
+    func applyRefreshedTokens(_ refreshed: TokenRefreshResponse, to url: URL, expectedRefreshToken: String? = nil) throws {
         let data = try Data(contentsOf: url)
         guard var root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw StoreError.io(L.errNotJSONObject)
         }
         var tokens = root["tokens"] as? [String: Any] ?? [:]
+        if let expected = expectedRefreshToken, tokens["refresh_token"] as? String != expected {
+            throw StoreError.io(L.logoutAccountChanged)
+        }
         if let v = refreshed.idToken { tokens["id_token"] = v }
         if let v = refreshed.accessToken { tokens["access_token"] = v }
         if let v = refreshed.refreshToken { tokens["refresh_token"] = v }

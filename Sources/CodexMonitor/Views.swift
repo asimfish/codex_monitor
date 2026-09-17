@@ -224,6 +224,16 @@ struct AccountActionsMenu: View {
             Button(L.reloginEllipsis) {
                 LoginWindowController.shared.beginRelogin(entry: entry, monitor: monitor, panel: PanelController.shared)
             }
+            Divider()
+            Button(L.logoutAction, role: .destructive) {
+                if PanelController.shared.confirm(
+                    title: L.logoutTitle(entry.profile.displayName),
+                    message: L.logoutMessage,
+                    okTitle: L.logoutAction, destructive: true
+                ) {
+                    monitor.signOut(entryId: entry.id)
+                }
+            }
         } label: {
             Image(systemName: "doc.on.doc")
                 .font(.caption)

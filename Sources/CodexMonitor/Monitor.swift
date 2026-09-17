@@ -471,9 +471,9 @@ final class QuotaMonitor: ObservableObject {
         lastAutoRefreshAttempt[key] = Date()
         do {
             let refreshed = try await client.refreshTokens(refreshToken: rt)
-            try store.applyRefreshedTokens(refreshed, to: profile.authURL)
-            if entry.isActive, !profile.isMain {
-                try store.applyRefreshedTokens(refreshed, to: store.mainAuthURL)
+            try store.applyRefreshedTokens(refreshed, to: profile.authURL, expectedRefreshToken: rt)
+            if !profile.isMain, let main = store.loadMain(), ProfileStore.sameLogin(main, profile) {
+                try store.applyRefreshedTokens(refreshed, to: store.mainAuthURL, expectedRefreshToken: rt)
             }
             log(L.autoRefreshed(profile.displayName))
             reloadProfiles()
@@ -490,6 +490,25 @@ final class QuotaMonitor: ObservableObject {
     }
 
     // MARK: Actions
+
+    func signOut(entryId: String) {
+        guard let entry = entries.first(where: { $0.id == entryId }) else { return }
+        guard !LoginWindowController.shared.hasRunningLogin else {
+            PanelController.shared.info(title: L.logoutAction, message: L.logoutLoginRunning)
+            return
+        }
+        if DemoData.enabled {
+            entries.removeAll { $0.id == entryId }
+            return
+        }
+        do {
+            try store.signOut(entry.profile)
+            log(L.loggedOut(entry.profile.displayName))
+        } catch {
+            PanelController.shared.info(title: L.logoutAction, message: error.localizedDescription)
+        }
+        reloadProfiles()
+    }
 
     func activate(entryId: String) {
         guard let entry = entries.first(where: { $0.id == entryId }), !entry.profile.isMain else { return }
@@ -528,9 +547,9 @@ final class QuotaMonitor: ObservableObject {
         entries[idx].isFetching = true
         do {
             let refreshed = try await client.refreshTokens(refreshToken: rt)
-            try store.applyRefreshedTokens(refreshed, to: profile.authURL)
-            if entries[idx].isActive, !profile.isMain {
-                try store.applyRefreshedTokens(refreshed, to: store.mainAuthURL)
+            try store.applyRefreshedTokens(refreshed, to: profile.authURL, expectedRefreshToken: rt)
+            if !profile.isMain, let main = store.loadMain(), ProfileStore.sameLogin(main, profile) {
+                try store.applyRefreshedTokens(refreshed, to: store.mainAuthURL, expectedRefreshToken: rt)
             }
             log(L.tokensRefreshed(profile.displayName))
         } catch {

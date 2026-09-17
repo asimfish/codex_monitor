@@ -359,6 +359,47 @@ check(ProfileStore.displayProfiles([unknown1, unknown2]).count == 2, "unknown id
 check(ProfileStore.displayProfiles([aliasNew, aliasOld]).map(\.id) == ["b"], "selection independent of input order")
 check(ProfileStore.displayProfiles([]).isEmpty, "empty display list")
 
+// Local logout removes all aliases, but keeps unrelated accounts and non-auth files.
+let logoutA = store.accountsRoot.appendingPathComponent("logout-a/auth.json")
+let logoutAlias = store.accountsRoot.appendingPathComponent("logout-alias/auth.json")
+let logoutB = store.accountsRoot.appendingPathComponent("logout-b/auth.json")
+let logoutOtherWorkspace = store.accountsRoot.appendingPathComponent("logout-workspace/auth.json")
+let logoutAuth = makeAuth(email: "logout@example.com", account: "logout-account", lastRefresh: now)
+write(logoutAuth, to: logoutA)
+write(logoutAuth, to: logoutAlias)
+write(logoutAuth, to: store.mainAuthURL)
+write(makeAuth(email: "other@example.com", account: "other-account", lastRefresh: now), to: logoutB)
+write(makeAuth(email: "logout@example.com", account: "different-workspace", lastRefresh: now), to: logoutOtherWorkspace)
+let configSentinel = logoutA.deletingLastPathComponent().appendingPathComponent("config.toml")
+try! "keep-config".write(to: configSentinel, atomically: true, encoding: .utf8)
+let logoutProfile = store.loadProfiles().first { $0.id == "logout-a" }!
+try! store.signOut(logoutProfile)
+check(!fm.fileExists(atPath: logoutA.path) && !fm.fileExists(atPath: logoutAlias.path), "logout removes duplicate credential copies")
+check(!fm.fileExists(atPath: store.mainAuthURL.path), "logout active account clears main login")
+check(fm.fileExists(atPath: logoutB.path) && fm.fileExists(atPath: logoutOtherWorkspace.path), "logout keeps other identities and workspaces")
+check((try! String(contentsOf: configSentinel)) == "keep-config", "logout preserves configuration")
+check(try! !ProfileStore.hasStoredCredentials(in: logoutA.deletingLastPathComponent()), "logged-out name is reusable")
+do {
+    try store.applyRefreshedTokens(refreshed, to: logoutA, expectedRefreshToken: "rt.fake.logo")
+    check(false, "late refresh after logout must fail")
+} catch { check(!fm.fileExists(atPath: logoutA.path), "late refresh cannot recreate auth") }
+write(makeAuth(email: "other@example.com", account: "other-account", lastRefresh: now), to: store.mainAuthURL)
+let mainBeforeLogout = try! Data(contentsOf: store.mainAuthURL)
+write(logoutAuth, to: logoutA)
+let inactiveProfile = store.loadProfiles().first { $0.id == "logout-a" }!
+try! store.signOut(inactiveProfile)
+check((try! Data(contentsOf: store.mainAuthURL)) == mainBeforeLogout, "inactive logout preserves current account byte-for-byte")
+write(makeAuth(email: "new@example.com", account: "new-account", lastRefresh: now), to: logoutA)
+let replacementBytes = try! Data(contentsOf: logoutA)
+do {
+    try store.applyRefreshedTokens(refreshed, to: logoutA, expectedRefreshToken: "rt.fake.logo")
+    check(false, "stale refresh must not overwrite replacement login")
+} catch { check((try! Data(contentsOf: logoutA)) == replacementBytes, "replacement login survives stale refresh") }
+do {
+    try store.signOut(inactiveProfile)
+    check(false, "stale logout selection must not remove replacement login")
+} catch { check((try! Data(contentsOf: logoutA)) == replacementBytes, "replacement login survives stale logout") }
+
 if failures == 0 {
     print("ProfileStore sandbox test: all checks passed")
     exit(0)

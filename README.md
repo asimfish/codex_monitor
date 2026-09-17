@@ -114,6 +114,12 @@ bash scripts/install.sh
 
 Use your actual clone directory if it differs. Keep the clone: CLI symlinks point into it, while the native application lives in `~/Applications`. Run `bash scripts/uninstall.sh` to uninstall; stored accounts are retained.
 
+#### Sign out an account (native widget)
+
+Open the account actions menu on an expanded card or compact row, choose “退出登录” (sign out), and confirm. This removes that account's local `auth.json` files, including duplicate aliases. If it is active, the current Codex login is cleared too. Other accounts remain intact. Directories, configuration, session history and historical backups are retained; add the same name again to sign back in.
+
+This is local sign-out, not remote revocation: other devices and browsers stay signed in, and running Codex processes may retain credentials in memory. Close those processes if you also need to stop their sessions. Complete or cancel an ongoing add/re-login flow before signing out.
+
 #### Cannot retry the same account name after a failed login?
 
 The updated app reads `auth.json`: empty directories, blank/malformed files, and files without credentials can reuse the same name without deleting the directory. A non-empty access token, refresh token, or API key protects the existing profile from duplicate adds. Use the account menu's re-login action for saved credentials, even when expired; a local file check cannot determine server-side revocation. Read-permission errors stop the operation rather than treating the account as empty. Upgrade older installations using the steps above.

@@ -459,6 +459,8 @@ enum LoginDebug {
 final class LoginWindowController: NSObject, NSWindowDelegate {
     static let shared = LoginWindowController()
 
+    var hasRunningLogin: Bool { session?.isRunning == true }
+
     private var window: NSWindow?
     private var session: LoginSession?
 
