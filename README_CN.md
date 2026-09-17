@@ -61,9 +61,88 @@ Codex Monitor 把这三件事一起解决：一个只读的悬窗显示所有账
 
 ## 3. 🚀 快速开始
 
-两个前端共用同一套账号目录（`~/.codex-accounts`）和同一套逻辑，用其中一个或两个都可以。
+两个前端共用账号目录（`~/.codex-accounts`），界面与部分功能不同。
 
-### 3.1 任意系统：网页仪表盘 + 命令行（Python 3.8+，零依赖）
+**想安装截图中的 macOS 原生悬浮窗，请按下面 3.1 操作。** 网页版是另一种界面，见 3.2；`pip install` 和 `serve --app` 不会安装原生悬窗。
+
+### 3.1 macOS：原生悬窗（推荐给 Mac 用户）
+
+**准备条件**：macOS 14 或更新版本、能访问 GitHub 的网络、当前已登录 macOS 桌面。Apple Silicon 和 Intel 使用同一组源码命令，在本机编译对应架构。不要用 `sudo` 运行安装脚本。
+
+**第一步：检查编译工具。** 打开“终端”，运行：
+
+```bash
+xcrun swiftc --version
+```
+
+如果提示找不到工具，运行下面命令，在弹窗中完成安装，再重新运行上面的检查。已经装好工具的用户跳过此步。
+
+```bash
+xcode-select --install
+```
+
+**第二步：下载源码并安装。** 以下示例把源码保存在 `~/Code/codex_monitor`；如果这个目录已经存在，请使用后面的升级步骤。
+
+```bash
+mkdir -p ~/Code
+cd ~/Code
+git clone https://github.com/asimfish/codex_monitor.git
+cd codex_monitor
+bash scripts/install.sh
+```
+
+脚本会编译、安装到 `~/Applications/CodexMonitor.app` 并启动，设置登录时自动启动，同时将命令行链接到 `~/.local/bin`。看到 `CodexMonitor is running` 和 `done.` 表示脚本完成。编译耗时取决于机器；请等终端返回提示符。
+
+**第三步：打开并添加账号。** 如未看到面板，在终端运行：
+
+```bash
+open "$HOME/Applications/CodexMonitor.app"
+```
+
+已有 Codex 登录时会读取当前账号；没有账号时，点击面板底部“添加账号”，按引导在浏览器中登录。没有预装 Codex CLI 也可以使用内置的浏览器登录。账号数据保存在你自己的电脑上，不随源码提供。菜单栏也可重新显示面板。
+
+**升级已安装的版本**（先保存自己的源码改动）：
+
+```bash
+cd ~/Code/codex_monitor
+git switch main
+git pull --ff-only
+bash scripts/install.sh
+```
+
+如果你克隆到了其他位置，把第一行换成自己的源码目录。保留该目录：命令行工具软链仍指向它。原生应用本身安装在 `~/Applications`。卸载命令为 `bash scripts/uninstall.sh`，不会删除账号存档。
+
+#### 为什么外观可能与截图不同？
+
+原生面板使用 macOS 系统材质，会随浅色/深色外观变化；深色模式下可能呈近黑色。系统“辅助功能 → 显示 → 降低透明度”会把透明区域改为实色（[Apple 说明](https://support.apple.com/en-ie/guide/mac-help/mchl11ddd4b3/mac)）。截图展示的是特定系统与外观设置，不保证每台机器有相同颜色和透明度。
+
+**原生窗口黑底问题仍在排查，尚未确认对方机器上的根因。** 若文字消失、整块黑屏或关闭“降低透明度”后仍与预期不同，请提交打码截图、macOS 版本、下面命令的输出，以及安装方式；不要上传 `auth.json`。构建成功不能代替显示效果验证。
+
+```bash
+sw_vers
+uname -m
+xcrun swiftc --version
+git rev-parse HEAD
+```
+
+#### 复现一个确定的源码版本
+
+下面锁定到通过 CI 的 `6726148` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
+
+```bash
+git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
+cd codex_monitor_repro
+git checkout --detach 6726148f2d288fc24467194aa323c4ae0fe35870
+bash tests/run_store_tests.sh
+bash tests/run_account_order_tests.sh
+bash scripts/build.sh
+```
+
+如需把这个版本安装到本机，再运行 `bash scripts/install.sh`；它会替换已有原生应用。仅编译使用系统 Swift 工具链，无第三方 Swift 依赖。模拟账号模式用于检查界面，不代表真实登录和额度接口已验证。
+
+滚动列表、自动/手动排序和重复账号合并显示属于原生悬窗功能。同工作区、同用户的重复存档合并显示，原文件保留。当前使用账号固定在顶部，其他账号默认优先显示有额度且凭证未过期的项。
+
+### 3.2 任意系统：网页仪表盘 + 命令行（Python 3.8+，零依赖）
 
 ```bash
 # 安装（pipx 隔离安装；直接 pip 也行）
@@ -109,43 +188,17 @@ codex-monitor export work ~/Desktop/   # 拷一份 auth.json 给别的机器
 - 无图形的服务器？`codex-monitor add work --no-open` 只打印登录链接，在任何有浏览器的机器上打开——但回调会打到**运行 codex-monitor 的那台机器**的 `localhost:1455`，需要转发端口（`ssh -L 1455:localhost:1455 box`）或改用 `--device`。
 </details>
 
-### 3.2 macOS：原生悬窗（菜单栏 + 浮动面板）
+### 3.3 验证范围与下载
 
-需要 macOS 14+ 和 Xcode Command Line Tools（`xcode-select --install`，提供 `swiftc`）。
+[固定版本 6726148 的成功 CI](https://github.com/asimfish/codex_monitor/actions/runs/35210407282) 验证了：
 
-```bash
-git clone https://github.com/asimfish/codex_monitor.git
-cd codex_monitor
-./scripts/install.sh
-```
+| 检查 | 已验证环境 | 不代表什么 |
+|---|---|---|
+| Python 测试、`pip install .`、CLI 帮助命令 | GitHub 的 Windows、Linux、macOS runner，Python 3.11 | 不代表真实账号登录、自启或全部桌面交互均在三平台验证 |
+| Swift 存储/排序测试、原生应用编译和打包 | `macos-14` runner，Apple Silicon | 不代表 Intel 实机或所有 macOS 版本上的显示效果已验证 |
+| 原生应用安装、自启、真实账号使用 | 开发机 macOS 26.2，Apple Silicon | 不保证对方电脑与截图具有相同透明效果 |
 
-`install.sh` 编译 `CodexMonitor.app`（ad-hoc 签名，约 1 分钟），装到 `~/Applications`，注册开机自启的 LaunchAgent，并把命令行软链到 `~/.local/bin/codex-monitor` / `codex-acct`。再跑一次即升级；`./scripts/uninstall.sh` 卸载（不会删你存的账号）。悬窗出现在屏幕右上角；添加账号的操作和仪表盘完全一样（**添加账号** → 隐身窗口 → 完成）。
-
-### 升级与复现
-
-本次的滚动列表、自动/手动排序和重复账号合并显示适用于 **macOS 原生悬窗**。同一工作区、同一用户的多个存档只显示一项，优先使用未过期且较新的凭证；存档文件不会删除。同邮箱的不同工作区仍保留。
-
-已有克隆可以这样升级（先保存自己的源码改动）：
-
-```bash
-git pull --ff-only
-bash scripts/install.sh
-```
-
-复现某个版本时，在全新克隆中运行 `git checkout <commit SHA>`，然后运行 `bash tests/run_store_tests.sh`、`bash tests/run_account_order_tests.sh` 和 `bash scripts/build.sh`。SHA 可从 GitHub 提交页复制。构建只使用系统 Swift 工具链，不需要第三方 Swift 依赖或个人配置；运行时使用各自的账号，仓库不包含登录凭证。`CODEX_MONITOR_DEMO=1` 可使用模拟账号（先退出已运行的应用，再执行 `CODEX_MONITOR_DEMO=1 "$(cat .last-build-path)/Contents/MacOS/CodexMonitor"`）。
-
-GitHub **Actions → Verify and build** 会运行跨平台 Python 测试及 macOS Swift 测试，并提供 `CodexMonitor-macos` 下载产物。应用为 ad-hoc 签名，未经过 Apple 公证；源码安装仍是推荐方式。构建产物仅对应该次运行的 macOS 架构，其他架构请从源码编译。
-
-### 3.3 在哪些环境验证过
-
-| | macOS 26（Apple 芯片） | Linux（Debian，Docker `python:3.8-slim` / `3.12-slim`） | Windows |
-|---|---|---|---|
-| Python 测试（`tests/test_python.py`、`tests/test_cli.py`） | ✅ Python 3.9 | ✅ 3.8 与 3.12 | 未真机运行——Windows 专属分支在测试里用模拟的 `os.name == "nt"` 覆盖 |
-| `pip install .`、`codex-monitor --version`、仪表盘启动、`autostart install/remove` | ✅ | ✅（XDG autostart 路径；容器里没有 systemd） | 未真机运行 |
-| 真实账号：用量接口、实时 rollout 事件、OAuth 浏览器登录 | ✅（5 个账号） | – | – |
-| 原生悬窗 | ✅ | – | – |
-
-如果你在 Windows 上跑了，不管好坏都欢迎开 issue 反馈。
+下载编译产物：打开上面的 CI 链接 → 页面底部 **Artifacts** → `CodexMonitor-macos`（下载通常需要登录 GitHub，产物会过期）。下载包中包含应用 ZIP，解压后得到 `CodexMonitor.app`。它是 Apple Silicon 构建，ad-hoc 签名、未经过 Apple 公证；不熟悉手动安装时，优先按 3.1 从源码安装，脚本会一并配置自启。Intel 用户请从源码编译。
 
 ## 4. 🧭 悬窗怎么用
 

@@ -63,9 +63,88 @@ Codex Monitor solves all three: a read-only widget that shows every account's qu
 
 ## 3. 🚀 Quick Start
 
-Two front-ends share the same account store (`~/.codex-accounts`) and the same logic; pick either or both.
+Both front-ends share the account store (`~/.codex-accounts`), but their interfaces and some features differ.
 
-### 3.1 Any OS — web dashboard + CLI (Python 3.8+, no dependencies)
+**For the native macOS floating widget in the screenshot, follow section 3.1 below.** The browser dashboard is a separate interface (3.2); `pip install` and `serve --app` do not install the native widget.
+
+### 3.1 macOS — native floating widget
+
+**Requirements:** macOS 14 or newer, access to GitHub, and a logged-in macOS desktop session. The same source commands compile for your local Apple Silicon or Intel architecture. Run the installer without `sudo`.
+
+**1. Check the compiler.** Open Terminal and run:
+
+```bash
+xcrun swiftc --version
+```
+
+If the tools are missing, run the following command, finish installation in the dialog, and repeat the compiler check. Skip this step if tools are already installed.
+
+```bash
+xcode-select --install
+```
+
+**2. Download and install.** This example keeps the source in `~/Code/codex_monitor`. If that directory already exists, use the upgrade instructions instead.
+
+```bash
+mkdir -p ~/Code
+cd ~/Code
+git clone https://github.com/asimfish/codex_monitor.git
+cd codex_monitor
+bash scripts/install.sh
+```
+
+The script builds and starts `~/Applications/CodexMonitor.app`, configures launch at login, and links the CLI into `~/.local/bin`. Look for `CodexMonitor is running` and `done.`. Compilation time varies; wait for the shell prompt to return.
+
+**3. Open and sign in.** If the panel is not visible:
+
+```bash
+open "$HOME/Applications/CodexMonitor.app"
+```
+
+An existing Codex login is detected automatically. Otherwise click “添加账号” (add account) and follow the browser login. The built-in browser login does not require the Codex CLI. Credentials belong to each user's machine and are not bundled with the source. The menu bar also lets you show the panel again.
+
+**Upgrade an existing installation** (save your own source changes first):
+
+```bash
+cd ~/Code/codex_monitor
+git switch main
+git pull --ff-only
+bash scripts/install.sh
+```
+
+Use your actual clone directory if it differs. Keep the clone: CLI symlinks point into it, while the native application lives in `~/Applications`. Run `bash scripts/uninstall.sh` to uninstall; stored accounts are retained.
+
+#### Why can the appearance differ from screenshots?
+
+The native panel uses macOS system materials and follows light/dark appearance; dark mode can look nearly black. Accessibility → Display → Reduce transparency replaces transparent areas with solid backgrounds ([Apple documentation](https://support.apple.com/en-ie/guide/mac-help/mchl11ddd4b3/mac)). Screenshots show one system configuration, not a guarantee of identical color or translucency everywhere.
+
+**The reported black native window is still under investigation; its cause on the affected machine is not confirmed.** For missing text, a fully black window, or unexpected opacity after checking Reduce transparency, report a redacted screenshot, macOS version, installation method, and the output below. Do not upload `auth.json`. A successful build does not verify visual rendering.
+
+```bash
+sw_vers
+uname -m
+xcrun swiftc --version
+git rev-parse HEAD
+```
+
+#### Reproduce a specific source version
+
+This pins the CI-verified `6726148` commit in a new directory and builds/tests it without replacing the installed application:
+
+```bash
+git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
+cd codex_monitor_repro
+git checkout --detach 6726148f2d288fc24467194aa323c4ae0fe35870
+bash tests/run_store_tests.sh
+bash tests/run_account_order_tests.sh
+bash scripts/build.sh
+```
+
+Run `bash scripts/install.sh` afterward only to install that version; this replaces the existing native app. Compilation uses the system Swift toolchain without third-party Swift dependencies. Fabricated demo accounts can check layout, but do not validate real login or quota endpoints.
+
+Scrolling, automatic/manual ordering, and duplicate-profile consolidation are native-widget features. Duplicate aliases for the same workspace and user appear once; files remain on disk. The active account stays pinned, with usable quota and unexpired credentials preferred among other accounts.
+
+### 3.2 Any OS — web dashboard + CLI (Python 3.8+, no dependencies)
 
 ```bash
 # install (pipx keeps it isolated; plain pip works too)
@@ -111,43 +190,17 @@ codex-monitor export work ~/Desktop/   # copy an auth.json out for another machi
 - Headless box? `codex-monitor add work --no-open` prints the login URL; open it on any machine with a browser — the redirect goes to `localhost:1455` **on the machine running codex-monitor**, so forward the port (`ssh -L 1455:localhost:1455 box`) or use `--device`.
 </details>
 
-### 3.2 macOS — native floating widget (menu bar + panel)
+### 3.3 Verification scope and downloads
 
-Requires macOS 14+ and the Xcode Command Line Tools (`xcode-select --install`, provides `swiftc`).
+[Successful CI for pinned version 6726148](https://github.com/asimfish/codex_monitor/actions/runs/35210407282) verifies:
 
-```bash
-git clone https://github.com/asimfish/codex_monitor.git
-cd codex_monitor
-./scripts/install.sh
-```
+| Check | Verified environment | Limits |
+|---|---|---|
+| Python tests, `pip install .`, CLI help | GitHub Windows, Linux and macOS runners, Python 3.11 | Does not verify real login, autostart or every desktop interaction on all three platforms |
+| Swift storage/order tests, native build and packaging | `macos-14` runner, Apple Silicon | Does not verify Intel hardware or appearance on every macOS version |
+| Native installation, launch at login, real account use | Developer Mac: macOS 26.2, Apple Silicon | Does not guarantee identical transparency on another Mac |
 
-`install.sh` compiles `CodexMonitor.app` (ad-hoc signed, about a minute), installs it to `~/Applications`, registers a LaunchAgent so it starts at login, and links the CLI to `~/.local/bin/codex-monitor` / `codex-acct`. Re-run to upgrade; `./scripts/uninstall.sh` removes everything except your stored accounts. The widget appears top-right; adding an account works exactly like in the dashboard (**添加账号** → private window → done).
-
-### Upgrade and reproduce
-
-Scrollable accounts, automatic/manual ordering, and duplicate-account display consolidation are **native macOS widget** features. Aliases for the same workspace and user appear once, preferring unexpired and newer credentials. Files stay on disk; different workspaces sharing an email remain separate.
-
-To upgrade an existing clone, first save any local source edits:
-
-```bash
-git pull --ff-only
-bash scripts/install.sh
-```
-
-To reproduce a version, use `git checkout <commit SHA>` in a fresh clone, then run `bash tests/run_store_tests.sh`, `bash tests/run_account_order_tests.sh`, and `bash scripts/build.sh`. Copy the SHA from GitHub's commit page. The native build uses the system Swift toolchain without third-party Swift dependencies or personal configuration. Credentials are not shipped. For fabricated offline accounts, quit the running app, then execute `CODEX_MONITOR_DEMO=1 "$(cat .last-build-path)/Contents/MacOS/CodexMonitor"`.
-
-GitHub **Actions → Verify and build** runs cross-platform Python tests and native Swift checks, and provides a `CodexMonitor-macos` download artifact. The app is ad-hoc signed, not Apple-notarized; building from source remains recommended. The artifact targets the architecture of that macOS runner; build from source for other architectures.
-
-### 3.3 What was verified where
-
-| | macOS 26 (Apple silicon) | Linux (Debian, Docker `python:3.8-slim` / `3.12-slim`) | Windows |
-|---|---|---|---|
-| Python tests (`tests/test_python.py`, `tests/test_cli.py`) | ✅ Python 3.9 | ✅ 3.8 and 3.12 | not run — Windows-only branches are exercised with simulated `os.name == "nt"` in the tests |
-| `pip install .`, `codex-monitor --version`, dashboard boots, `autostart install/remove` | ✅ | ✅ (XDG autostart path; no systemd in containers) | not run |
-| Real accounts: quota API, live rollout events, OAuth browser login | ✅ (5 accounts) | – | – |
-| Native widget | ✅ | – | – |
-
-If you run it on Windows, please open an issue with what you saw — good or bad.
+For the compiled app, open the CI link above → **Artifacts** → `CodexMonitor-macos` (GitHub sign-in is usually required; artifacts expire). The download contains an application ZIP; extract it to obtain `CodexMonitor.app`. This is an Apple Silicon build, ad-hoc signed and not Apple-notarized. Section 3.1's source installer is recommended and also configures autostart. Intel users should build from source.
 
 ## 4. 🧭 Using the widget
 
