@@ -273,11 +273,11 @@ final class LoginSession: ObservableObject {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
-            Task { @MainActor in self?.consume(data) }
+            Task { @MainActor [weak self] in self?.consume(data) }
         }
         p.terminationHandler = { [weak self] proc in
             let status = proc.terminationStatus
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 let rest = pipe.fileHandleForReading.readDataToEndOfFile()
                 pipe.fileHandleForReading.readabilityHandler = nil
                 self?.consume(rest)

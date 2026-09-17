@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Unit + integration tests for the cross-platform Python package (stdlib only, no network
-required except one token-exchange attempt that is expected to fail).
+"""Unit + integration tests for the cross-platform Python package (stdlib only, no external network
+required; local HTTP callbacks use fabricated credentials).
 
 Runs against throw-away CODEX_HOME / CODEX_ACCOUNTS_DIR directories with fake JWTs.
 """
@@ -14,6 +14,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -288,7 +289,8 @@ class OAuthTests(unittest.TestCase):
         self.assertEqual(oauth.parse_device_output(text), ("https://auth.openai.com/codex/device", "ABCD-EFGHJ"))
         self.assertIsNone(oauth.parse_device_output("https://x.y only"))
 
-    def test_browser_login_flow_with_fake_callback(self):
+    @patch("codex_monitor.oauth.exchange_code", side_effect=oauth.OAuthError("token exchange failed: fixture"))
+    def test_browser_login_flow_with_fake_callback(self, exchange):
         flow = oauth.BrowserLogin(SANDBOX / "accounts" / "login-test")
         flow.start()
         if flow.phase == "failed":
@@ -330,7 +332,8 @@ class StoreAndWebTests(unittest.TestCase):
         with self.assertRaises(store.StoreError):
             store.get_profile("nope")
 
-    def test_web_server(self):
+    @patch.object(Monitor, "refresh_all")
+    def test_web_server(self, refresh):
         monitor = Monitor(interval=3600)
         monitor.reload_profiles()
         server = make_server(monitor, port=0)
@@ -370,6 +373,7 @@ class StoreAndWebTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             monitor.stop()
+            t.join(timeout=5)
 
 
 class PlatformTests(unittest.TestCase):
