@@ -312,6 +312,32 @@ try! "model = \"x\"\nchatgpt_base_url = \"https://relay.example.com/backend-api\
     .write(to: store.codexHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
 check(store.chatGPTBaseURL().absoluteString == "https://relay.example.com/backend-api", "base url from config: \(store.chatGPTBaseURL())")
 
+// Duplicate aliases are presentation-only: select a usable, recent credential.
+func displayFixture(_ name: String, account: String?, user: String?, email: String?, age: TimeInterval, expired: Bool = false) -> Profile {
+    let dir = URL(fileURLWithPath: "/fixture/" + name)
+    var p = Profile(id: name, name: name, directory: dir, authURL: dir.appendingPathComponent("auth.json"), isMain: false)
+    var identity = Identity(auth: try! JSONDecoder().decode(AuthFile.self, from: JSONSerialization.data(withJSONObject: makeAuth(email: email ?? "", account: account ?? "", lastRefresh: Date()))))
+    identity.accountId = account
+    identity.userId = user
+    identity.email = email
+    identity.accessTokenExpiry = Date().addingTimeInterval(expired ? -100 : 3600)
+    p.identity = identity
+    p.modified = Date(timeIntervalSince1970: age)
+    return p
+}
+let aliasOld = displayFixture("a", account: "workspace", user: "user", email: "a@example.com", age: 10)
+let aliasNew = displayFixture("b", account: "workspace", user: "user", email: "a@example.com", age: 20)
+let expiredAlias = displayFixture("c", account: "workspace", user: "user", email: "a@example.com", age: 30, expired: true)
+check(ProfileStore.displayProfiles([aliasOld, aliasNew, expiredAlias]).map(\.id) == ["b"], "duplicate aliases select newest unexpired credential")
+let otherWorkspace = displayFixture("d", account: "other", user: "user", email: "a@example.com", age: 10)
+let otherUser = displayFixture("e", account: "workspace", user: "different", email: "b@example.com", age: 10)
+check(ProfileStore.displayProfiles([aliasOld, otherWorkspace, otherUser]).count == 3, "preserve different workspaces and users")
+let unknown1 = displayFixture("f", account: nil, user: nil, email: nil, age: 10)
+let unknown2 = displayFixture("g", account: nil, user: nil, email: nil, age: 10)
+check(ProfileStore.displayProfiles([unknown1, unknown2]).count == 2, "unknown identities remain separate")
+check(ProfileStore.displayProfiles([aliasNew, aliasOld]).map(\.id) == ["b"], "selection independent of input order")
+check(ProfileStore.displayProfiles([]).isEmpty, "empty display list")
+
 if failures == 0 {
     print("ProfileStore sandbox test: all checks passed")
     exit(0)

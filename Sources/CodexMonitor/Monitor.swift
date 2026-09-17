@@ -74,6 +74,33 @@ final class QuotaMonitor: ObservableObject {
     }
 
     @Published private(set) var entries: [Entry] = []
+    @Published private var accountOrder = AccountOrder()
+
+    var usesAutomaticAccountOrder: Bool { accountOrder.automatic }
+
+    private var accountPriorities: [String: Int] {
+        Dictionary(uniqueKeysWithValues: entries.map { entry in
+            (entry.id, AccountOrder.priority(
+                remaining: entry.tightestWindow?.remainingPercent,
+                expired: entry.profile.identity?.accessTokenExpired == true,
+                hasError: entry.error != nil,
+                limited: entry.displayRateLimit?.limitReached == true || entry.displayRateLimit?.allowed == false
+            ))
+        })
+    }
+
+    func restoreAutomaticAccountOrder() { accountOrder.useAutomaticOrder() }
+
+    var orderedOtherEntries: [Entry] {
+        let byId = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
+        return accountOrder.sorted(entries.map(\.id), priorities: accountPriorities).compactMap { byId[$0] }.filter { !$0.isActive }
+    }
+
+    func moveAccount(_ id: String, direction: AccountOrder.Move) {
+        accountOrder.move(id, direction: direction, available: entries.map(\.id),
+                          pinned: Set(entries.filter(\.isActive).map(\.id)), priorities: accountPriorities)
+    }
+
     @Published private(set) var lastRefresh: Date?
     @Published private(set) var isRefreshing = false
     @Published private(set) var recentMessages: [String] = []
@@ -197,6 +224,8 @@ final class QuotaMonitor: ObservableObject {
             log(msg)
             profiles = store.loadProfiles()
         }
+
+        profiles = ProfileStore.displayProfiles(profiles)
 
         var previous: [String: Entry] = [:]
         for e in entries {

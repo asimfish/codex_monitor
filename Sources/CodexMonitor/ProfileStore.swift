@@ -100,6 +100,44 @@ final class ProfileStore {
         return out.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    // Keep aliases on disk; show one representative per workspace and user.
+    static func displayProfiles(_ profiles: [Profile]) -> [Profile] {
+        var result: [Profile] = []
+        var positions: [[String]: Int] = [:]
+        for profile in profiles {
+            guard let account = profile.accountId, !account.isEmpty else {
+                result.append(profile)
+                continue
+            }
+            let person: String
+            if let user = profile.identity?.userId, !user.isEmpty {
+                person = "user:" + user
+            } else if let email = profile.email, !email.isEmpty {
+                person = "email:" + email.lowercased()
+            } else {
+                // Without a user identity, do not merge possibly shared workspaces.
+                result.append(profile)
+                continue
+            }
+            let key = [account, person]
+            if let index = positions[key] {
+                let existing = result[index]
+                let expired = profile.identity?.accessTokenExpired == true
+                let existingExpired = existing.identity?.accessTokenExpired == true
+                let date = profile.lastRefresh ?? profile.modified ?? .distantPast
+                let existingDate = existing.lastRefresh ?? existing.modified ?? .distantPast
+                if (existingExpired && !expired) || (expired == existingExpired &&
+                    (date > existingDate || (date == existingDate && profile.id < existing.id))) {
+                    result[index] = profile
+                }
+            } else {
+                positions[key] = result.count
+                result.append(profile)
+            }
+        }
+        return result
+    }
+
     private func load(id: String, name: String, directory: URL, isMain: Bool) -> Profile {
         let authURL = directory.appendingPathComponent("auth.json")
         var p = Profile(id: id, name: name, directory: directory, authURL: authURL, isMain: isMain)

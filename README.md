@@ -123,6 +123,21 @@ cd codex_monitor
 
 `install.sh` compiles `CodexMonitor.app` (ad-hoc signed, about a minute), installs it to `~/Applications`, registers a LaunchAgent so it starts at login, and links the CLI to `~/.local/bin/codex-monitor` / `codex-acct`. Re-run to upgrade; `./scripts/uninstall.sh` removes everything except your stored accounts. The widget appears top-right; adding an account works exactly like in the dashboard (**添加账号** → private window → done).
 
+### Upgrade and reproduce
+
+Scrollable accounts, automatic/manual ordering, and duplicate-account display consolidation are **native macOS widget** features. Aliases for the same workspace and user appear once, preferring unexpired and newer credentials. Files stay on disk; different workspaces sharing an email remain separate.
+
+To upgrade an existing clone, first save any local source edits:
+
+```bash
+git pull --ff-only
+bash scripts/install.sh
+```
+
+To reproduce a version, use `git checkout <commit SHA>` in a fresh clone, then run `bash tests/run_store_tests.sh`, `bash tests/run_account_order_tests.sh`, and `bash scripts/build.sh`. Copy the SHA from GitHub's commit page. The native build uses the system Swift toolchain without third-party Swift dependencies or personal configuration. Credentials are not shipped. For fabricated offline accounts, quit the running app, then execute `CODEX_MONITOR_DEMO=1 "$(cat .last-build-path)/Contents/MacOS/CodexMonitor"`.
+
+GitHub **Actions → Verify and build** runs cross-platform Python tests and native Swift checks, and provides a `CodexMonitor-macos` download artifact. The app is ad-hoc signed, not Apple-notarized; building from source remains recommended. The artifact targets the architecture of that macOS runner; build from source for other architectures.
+
 ### 3.3 What was verified where
 
 | | macOS 26 (Apple silicon) | Linux (Debian, Docker `python:3.8-slim` / `3.12-slim`) | Windows |
@@ -145,6 +160,8 @@ If you run it on Windows, please open an issue with what you saw — good or bad
 | Strip | status dot, vertical quota bar, remaining %, short countdown; only the bottom arrow expands (the rest just drags) |
 
 Colours: green > 50 % remaining, orange 20–50 %, red ≤ 20 % or limit reached; yellow dot = showing cached data; grey = not loaded yet.
+
+Click “调整顺序” (reorder) beside the other-accounts heading, then use the arrows to move an account up, down, to the top or to the bottom. Click “完成” (done) when finished. Automatic ordering defaults to accounts with remaining quota and unexpired credentials first; exhausted or errored accounts follow. The active account stays pinned above the list. Moving an account saves a custom order across restarts; click “自动排序” (automatic order) to restore the default.
 
 ## 5. 👥 Multiple accounts — `codex-monitor` CLI
 
@@ -234,6 +251,7 @@ tests/run_store_tests.sh  Swift tests (macOS)
 
 ```bash
 python3 tests/test_python.py && python3 tests/test_cli.py            # any OS
+bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS, Swift side
 tar --exclude=.git -c . | docker run --rm -i python:3.8-slim bash -c 'mkdir /src && tar -x -C /src && bash /src/tests/linux_smoke.sh'
 CODEX_MONITOR_DEMO=1 codex-monitor serve                               # dashboard with fabricated accounts, no network

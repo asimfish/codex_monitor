@@ -1,0 +1,32 @@
+name: Verify and build
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  python:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python tests/test_python.py
+      - run: python tests/test_cli.py
+      - run: python -m pip install .
+      - run: codex-monitor --help
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash tests/run_store_tests.sh
+      - run: bash tests/run_account_order_tests.sh
+      - run: bash scripts/build.sh
+      - name: Package application
+        run: ditto -c -k --sequesterRsrc --keepParent "$(cat .last-build-path)" CodexMonitor-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CodexMonitor-macos
+          path: CodexMonitor-macos.zip

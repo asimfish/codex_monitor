@@ -17,6 +17,15 @@ extension L {
     static func otherAccounts(_ n: Int) -> String { "其他账号 · \(n)" }
     static let expandAll = "全部展开"
     static let collapseAll = "全部收起"
+    static let automaticAccountOrder = "自动排序"
+    static let automaticAccountOrderHelp = "优先显示有额度且凭证未过期的账号"
+    static let reorderAccounts = "调整顺序"
+    static let finishOrdering = "完成"
+    static let moveAccountUp = "上移"
+    static let moveAccountDown = "下移"
+    static let moveAccountFirst = "移到顶部"
+    static let moveAccountLast = "移到底部"
+    static func accountPosition(_ n: Int) -> String { "第 \(n) 位" }
 
     // Per-account actions
     static let accountActionsHelp = "复制 / 导出这个账号的 auth.json"

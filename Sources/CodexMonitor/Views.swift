@@ -289,6 +289,7 @@ struct WidgetView: View {
     @ObservedObject var controller: PanelController
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var showLog = false
+    @State private var isReordering = false
     @State private var sectionHeights: [String: CGFloat] = [:]
     /// Non-active accounts the user has expanded; the active one is always a full card.
     @State private var expanded: Set<String> = []
@@ -296,7 +297,7 @@ struct WidgetView: View {
     /// collapsed strip is the compact view, so the panel itself shows everything).
     @AppStorage("othersExpandedByDefault") private var othersExpandedByDefault = true
 
-    private var otherIds: [String] { monitor.entries.filter { !$0.isActive }.map { $0.id } }
+    private var otherIds: [String] { monitor.orderedOtherEntries.map { $0.id } }
     private var allOthersExpanded: Bool { !otherIds.isEmpty && Set(otherIds).isSubset(of: expanded) }
 
     var body: some View {
@@ -318,19 +319,22 @@ struct WidgetView: View {
             if !otherIds.isEmpty {
                 ScrollView(.vertical) {
                     VStack(alignment: .leading, spacing: 8) {
-                        ForEach(monitor.entries.filter { !$0.isActive }) { entry in
-                            if expanded.contains(entry.id) {
-                                AccountCard(
-                                    entry: entry, monitor: monitor, controller: controller,
-                                    onCollapse: { expanded.remove(entry.id) }
-                                )
-                            } else {
-                                CompactAccountRow(
-                                    entry: entry,
-                                    monitor: monitor,
-                                    onExpand: { expanded.insert(entry.id) },
-                                    onSwitch: { confirmSwitch(to: entry) }
-                                )
+                        ForEach(monitor.orderedOtherEntries) { entry in
+                            VStack(alignment: .leading, spacing: 4) {
+                                if isReordering { reorderControls(for: entry) }
+                                if expanded.contains(entry.id) {
+                                    AccountCard(
+                                        entry: entry, monitor: monitor, controller: controller,
+                                        onCollapse: { expanded.remove(entry.id) }
+                                    )
+                                } else {
+                                    CompactAccountRow(
+                                        entry: entry,
+                                        monitor: monitor,
+                                        onExpand: { expanded.insert(entry.id) },
+                                        onSwitch: { confirmSwitch(to: entry) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -352,8 +356,9 @@ struct WidgetView: View {
         .onAppear {
             if othersExpandedByDefault { expanded.formUnion(otherIds) }
         }
-        .onChange(of: otherIds) { ids in
-            if othersExpandedByDefault { expanded.formUnion(ids) }
+        .onChange(of: otherIds) { previous, ids in
+            expanded.formIntersection(ids)
+            if othersExpandedByDefault { expanded.formUnion(Set(ids).subtracting(previous)) }
         }
         .padding(14)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -429,6 +434,17 @@ struct WidgetView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
             Spacer()
+            if !monitor.usesAutomaticAccountOrder {
+                Button(L.automaticAccountOrder) { monitor.restoreAutomaticAccountOrder() }
+                    .buttonStyle(.link)
+                    .font(.caption)
+                    .help(L.automaticAccountOrderHelp)
+            }
+            Button(isReordering ? L.finishOrdering : L.reorderAccounts) {
+                isReordering.toggle()
+            }
+            .buttonStyle(.link)
+            .font(.caption)
             Button(allOthersExpanded ? L.collapseAll : L.expandAll) {
                 if allOthersExpanded {
                     expanded.subtract(otherIds)
@@ -442,6 +458,42 @@ struct WidgetView: View {
             .font(.caption)
         }
         .padding(.horizontal, 4)
+    }
+
+    private func reorderControls(for entry: QuotaMonitor.Entry) -> some View {
+        HStack(spacing: 12) {
+            Text(L.accountPosition((otherIds.firstIndex(of: entry.id) ?? 0) + 1))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button { monitor.moveAccount(entry.id, direction: .first) } label: {
+                Image(systemName: "arrow.up.to.line")
+            }
+            .help(L.moveAccountFirst)
+            .accessibilityLabel(L.moveAccountFirst)
+            .disabled(otherIds.first == entry.id)
+            Button { monitor.moveAccount(entry.id, direction: .up) } label: {
+                Image(systemName: "arrow.up")
+            }
+            .help(L.moveAccountUp)
+            .accessibilityLabel(L.moveAccountUp)
+            .disabled(otherIds.first == entry.id)
+            Button { monitor.moveAccount(entry.id, direction: .down) } label: {
+                Image(systemName: "arrow.down")
+            }
+            .help(L.moveAccountDown)
+            .accessibilityLabel(L.moveAccountDown)
+            .disabled(otherIds.last == entry.id)
+            Button { monitor.moveAccount(entry.id, direction: .last) } label: {
+                Image(systemName: "arrow.down.to.line")
+            }
+            .help(L.moveAccountLast)
+            .accessibilityLabel(L.moveAccountLast)
+            .disabled(otherIds.last == entry.id)
+        }
+        .buttonStyle(.plain)
+        .font(.caption)
+        .padding(.horizontal, 10)
     }
 
     private func confirmSwitch(to entry: QuotaMonitor.Entry) {

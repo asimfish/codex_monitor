@@ -121,6 +121,21 @@ cd codex_monitor
 
 `install.sh` 编译 `CodexMonitor.app`（ad-hoc 签名，约 1 分钟），装到 `~/Applications`，注册开机自启的 LaunchAgent，并把命令行软链到 `~/.local/bin/codex-monitor` / `codex-acct`。再跑一次即升级；`./scripts/uninstall.sh` 卸载（不会删你存的账号）。悬窗出现在屏幕右上角；添加账号的操作和仪表盘完全一样（**添加账号** → 隐身窗口 → 完成）。
 
+### 升级与复现
+
+本次的滚动列表、自动/手动排序和重复账号合并显示适用于 **macOS 原生悬窗**。同一工作区、同一用户的多个存档只显示一项，优先使用未过期且较新的凭证；存档文件不会删除。同邮箱的不同工作区仍保留。
+
+已有克隆可以这样升级（先保存自己的源码改动）：
+
+```bash
+git pull --ff-only
+bash scripts/install.sh
+```
+
+复现某个版本时，在全新克隆中运行 `git checkout <commit SHA>`，然后运行 `bash tests/run_store_tests.sh`、`bash tests/run_account_order_tests.sh` 和 `bash scripts/build.sh`。SHA 可从 GitHub 提交页复制。构建只使用系统 Swift 工具链，不需要第三方 Swift 依赖或个人配置；运行时使用各自的账号，仓库不包含登录凭证。`CODEX_MONITOR_DEMO=1` 可使用模拟账号（先退出已运行的应用，再执行 `CODEX_MONITOR_DEMO=1 "$(cat .last-build-path)/Contents/MacOS/CodexMonitor"`）。
+
+GitHub **Actions → Verify and build** 会运行跨平台 Python 测试及 macOS Swift 测试，并提供 `CodexMonitor-macos` 下载产物。应用为 ad-hoc 签名，未经过 Apple 公证；源码安装仍是推荐方式。构建产物仅对应该次运行的 macOS 架构，其他架构请从源码编译。
+
 ### 3.3 在哪些环境验证过
 
 | | macOS 26（Apple 芯片） | Linux（Debian，Docker `python:3.8-slim` / `3.12-slim`） | Windows |
@@ -143,6 +158,8 @@ cd codex_monitor
 | 竖条 | 状态点、竖向额度条、剩余 %、短倒计时；只有底部箭头会展开，其他区域只用来拖动 |
 
 颜色：剩余 > 50% 绿，20–50% 橙，≤ 20% 或已达上限红；黄点 = 显示的是缓存；灰 = 尚未加载。
+
+在“其他账号”标题旁点击“调整顺序”，使用箭头上移、下移、移到顶部或底部，完成后点击“完成”。默认自动排序：有额度且凭证未过期的账号优先，额度用尽或状态异常的账号靠后；当前使用的账号固定在顶部。手动移动后采用自定义顺序并保存，重启后仍有效；点击“自动排序”可恢复默认规则。
 
 ## 5. 👥 多账号：`codex-monitor` 命令行
 
@@ -232,6 +249,7 @@ tests/run_store_tests.sh  Swift 测试（macOS）
 
 ```bash
 python3 tests/test_python.py && python3 tests/test_cli.py            # 任意系统
+bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS，Swift 端
 tar --exclude=.git -c . | docker run --rm -i python:3.8-slim bash -c 'mkdir /src && tar -x -C /src && bash /src/tests/linux_smoke.sh'
 CODEX_MONITOR_DEMO=1 codex-monitor serve                               # 演示模式：伪造账号，不联网
