@@ -50,7 +50,7 @@ Codex Monitor solves all three: a read-only widget that shows every account's qu
 - **Real-time** — the panel tails Codex session rollouts and updates within a second of each model response; the usage API (30 s by default) is the fallback and calibration.
 - **Collapsible** (widget): full panel → the active account as a card and the others as one-line rows (or all expanded) → a 46-px vertical strip pinned to the screen edge. Non-activating floating panel (clicking it never steals focus), draggable, remembers position, three window levels, starts at login via a LaunchAgent.
 - **Dashboard** (any OS): the same cards in a local web page, bilingual, `--app` opens it as a chromeless window; starts at login via `codex-monitor autostart install`.
-- One-click **switch** between accounts, **copy / export** any account's `auth.json`, **re-login** an account whose session was revoked.
+- One-click **switch** between accounts, **copy / export** any account's `auth.json`, **re-login** an account whose session was revoked. When switching away from an unarchived current login, the app automatically saves it as a profile and keeps a backup.
 
 **Multi-account**
 

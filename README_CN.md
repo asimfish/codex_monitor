@@ -48,7 +48,7 @@ Codex Monitor 把这三件事一起解决：一个只读的悬窗显示所有账
 - **实时**：面板 tail Codex 的会话 rollout，每轮模型响应后 1 秒内更新；用量接口（默认 30 秒）作为兜底和校准。
 - **可折叠**（悬窗）：完整面板 → 当前账号是完整卡片、其他账号一行摘要（或全部展开）→ 贴屏幕边的 46px 竖条。非激活浮动面板（点它不抢焦点）、可拖动、记住位置、三种层级、LaunchAgent 开机自启。
 - **仪表盘**（任意系统）：同样的卡片做成本地网页，中英双语，`--app` 可以开成无边框的独立窗口；`codex-monitor autostart install` 开机自启。
-- 一键**切换**账号、**复制 / 导出**任意账号的 `auth.json`、**重新登录**被服务端作废会话的账号。
+- 一键**切换**账号、**复制 / 导出**任意账号的 `auth.json`、**重新登录**被服务端作废会话的账号。切换时如果当前账号还没有存档，工具会先自动保存到账号列表并保留一份备份，避免账号“消失”。
 
 **多账号**
 
@@ -174,7 +174,7 @@ codex-monitor add work                 # 浏览器登录到 ~/.codex-accounts/wo
 codex-monitor add work --device        # 改用设备码登录（见第 5 节说明）
 codex-monitor list                     # 表格：邮箱 / 套餐 / token 到期 / 订阅到期 / 谁在使用中
 codex-monitor status                   # 每个账号的剩余 %、重置时间、重置次数
-codex-monitor use work                 # 设为当前账号（写入 ~/.codex/auth.json；原凭证先同步/备份）
+codex-monitor use work                 # 设为当前账号（写入 ~/.codex/auth.json；未存档的原账号会先自动保存/备份）
 codex-monitor run alt1                 # 不切换，直接在这个终端用另一个账号跑 codex
 codex-monitor export work ~/Desktop/   # 拷一份 auth.json 给别的机器
 ```

@@ -274,6 +274,7 @@ _ = try! store.activate(profiles.first { $0.name == "a" }!, currentMain: main, p
 check(accountId(at: store.mainAuthURL) == accA, "main is A after activate a")
 let backups = (try? fm.contentsOfDirectory(atPath: store.backupDir.path)) ?? []
 check(backups.count == 1 && backups[0].contains("c_at_example.com"), "backup created for C: \(backups)")
+check(store.loadProfiles().contains { $0.accountId == accC }, "unarchived current account preserved as a profile")
 
 // saveMainAsProfile with a messy name
 let saved = try! store.saveMainAsProfile(named: "a copy!")
@@ -305,7 +306,7 @@ check(afterRaw["auth_mode"] as? String == "chatgpt", "auth_mode preserved")
 // hidden / underscore dirs are not profiles
 write(makeAuth(email: "x@example.com", account: "x", lastRefresh: now), to: store.backupDir.appendingPathComponent("junk/auth.json"))
 write(makeAuth(email: "y@example.com", account: "y", lastRefresh: now), to: store.cacheDir.appendingPathComponent("auth.json"))
-check(Set(store.loadProfiles().map { $0.name }) == ["a", "a-copy", "b"], "hidden dirs ignored: \(store.loadProfiles().map { $0.name })")
+check(Set(store.loadProfiles().map { $0.name }) == ["a", "a-copy", "b", "c"], "hidden dirs ignored: \(store.loadProfiles().map { $0.name })")
 
 // chatgpt_base_url from config.toml
 try! "model = \"x\"\nchatgpt_base_url = \"https://relay.example.com/backend-api\" # comment\n"

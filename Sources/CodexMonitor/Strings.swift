@@ -40,6 +40,7 @@ enum L {
     static let errNoExecutable = "找不到可执行文件路径"
     static func adopted(_ name: String) -> String { "已把 ~/.codex 中刷新过的 token 同步到账号「\(name)」" }
     static func adoptFailed(_ name: String, _ err: String) -> String { "同步 token 到「\(name)」失败：\(err)" }
+    static func archived(_ name: String) -> String { "已将原账号保存为「\(name)」" }
     static func backedUp(_ path: String) -> String { "原 ~/.codex/auth.json 已备份到 \(path)" }
     static func switched(_ name: String) -> String { "已切换到「\(name)」" }
 

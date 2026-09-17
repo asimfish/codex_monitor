@@ -224,6 +224,8 @@ final class ProfileStore {
         if let main = currentMain, main.auth != nil {
             if let msg = adopt(main: main, into: profiles) { messages.append(msg) }
             if profiles.first(where: { $0.accountId == main.accountId }) == nil {
+                let archived = try archiveMainAsProfile(main)
+                messages.append(L.archived(archived.name))
                 let url = try backupMain(main)
                 messages.append(L.backedUp(url.path))
             }
@@ -232,6 +234,28 @@ final class ProfileStore {
         try writeAtomically(data, to: mainAuthURL)
         messages.append(L.switched(profile.displayName))
         return messages
+    }
+
+    private func archiveMainAsProfile(_ main: Profile) throws -> Profile {
+        guard let account = main.accountId, !account.isEmpty, main.auth?.hasLoginCredentials == true else {
+            throw StoreError.io(L.errNotJSONObject)
+        }
+        let base: String
+        if let email = main.email, let local = email.split(separator: "@").first {
+            base = sanitise(String(local))
+        } else {
+            base = "account-\(account.prefix(8))"
+        }
+        var name = base.isEmpty ? "account-\(account.prefix(8))" : base
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: accountsRoot.appendingPathComponent(name).path) {
+            name = "\(base)-\(suffix)"
+            suffix += 1
+        }
+        let dir = accountsRoot.appendingPathComponent(name)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try writeAtomically(Data(contentsOf: main.authURL), to: dir.appendingPathComponent("auth.json"))
+        return load(id: name, name: name, directory: dir, isMain: false)
     }
 
     private func backupMain(_ main: Profile) throws -> URL {

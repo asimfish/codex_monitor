@@ -111,10 +111,11 @@ def main() -> None:
         assert not (sb.accounts / "_backup").exists(), "unexpected backup for archived account"
         assert "b@example.com" in sb.run("current").stdout
 
-        # 3. main replaced externally by an unarchived account C, then use a -> C gets backed up
+        # 3. main replaced externally by an unarchived account C, then use a -> C is archived and backed up
         write(sb.main, make_auth("c@example.com", acct_c, now))
         sb.run("use", "a")
         assert account_of(sb.main) == acct_a
+        assert account_of(sb.profile("c")) == acct_c
         backups = list((sb.accounts / "_backup").glob("auth-c_at_example.com-*.json"))
         assert len(backups) == 1, backups
         assert account_of(backups[0]) == acct_c
@@ -169,7 +170,7 @@ def main() -> None:
         write(sb.accounts / "_backup" / "junk" / "auth.json", make_auth("x@example.com", "x" * 36, now))
         write(sb.accounts / ".cache" / "auth.json", make_auth("y@example.com", "y" * 36, now))
         names = [p["name"] for p in json.loads(sb.run("list", "--json").stdout)]
-        assert set(names) == {"a", "a-copy", "b"}, names
+        assert set(names) == {"a", "a-copy", "b", "c"}, names
 
     print("codex-acct sandbox test: all checks passed")
 

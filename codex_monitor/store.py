@@ -164,6 +164,20 @@ def adopt() -> Optional[str]:
     return f"synced refreshed tokens from {paths.display_path(main.auth_path)} into account '{target.name}'"
 
 
+def archive_main_as_profile(main: Profile) -> Profile:
+    if not main.account_id or not main.auth:
+        raise StoreError("current login has no usable credentials")
+    base = sanitize((main.ident.get("email") or "account-" + main.account_id[:8]).split("@", 1)[0])
+    name = base or "account-" + main.account_id[:8]
+    suffix = 2
+    while (paths.accounts_dir() / name).exists():
+        name = f"{base}-{suffix}"
+        suffix += 1
+    dst = paths.accounts_dir() / name / "auth.json"
+    atomic_write(dst, main.auth_path.read_bytes())
+    return get_profile(name)
+
+
 def backup_main(main: Profile) -> Path:
     bdir = paths.backup_dir()
     bdir.mkdir(parents=True, exist_ok=True)
@@ -182,8 +196,10 @@ def activate(name: str) -> List[str]:
         messages.append(msg)
     main = main_profile()
     if main and main.auth and not find_by_account(main.account_id):
+        archived = archive_main_as_profile(main)
+        messages.append(f"archived current account as '{archived.name}'")
         dst = backup_main(main)
-        messages.append(f"current {paths.display_path(main.auth_path)} ({main.display_name}) was not archived; backed up to {dst}")
+        messages.append(f"backed up current {paths.display_path(main.auth_path)} to {dst}")
     atomic_write(paths.main_auth_path(), target.auth_path.read_bytes())
     messages.append(f"switched: {paths.display_path(paths.main_auth_path())} -> '{name}' ({target.display_name})")
     return messages
