@@ -320,6 +320,56 @@ class StoreAndWebTests(unittest.TestCase):
         write(paths.accounts_dir() / "a" / "auth.json", make_auth("a@example.com", cls.acct_a, now - timedelta(hours=3)))
         write(paths.accounts_dir() / "b" / "auth.json", make_auth("b@example.com", cls.acct_b, now - timedelta(days=1), plan="plus"))
 
+    def test_failed_login_name_is_reusable(self):
+        directory = SANDBOX / "retry-test"
+        directory.mkdir(exist_ok=True)
+        self.assertFalse(store.has_stored_credentials(directory))
+        auth_path = directory / "auth.json"
+        for contents in ("", "{", "{}", "[]", '{"tokens": {}}', '{"tokens": {"access_token": ""}}'):
+            auth_path.write_text(contents)
+            self.assertFalse(store.has_stored_credentials(directory), contents)
+        for auth in ({"tokens": {"access_token": "saved-token"}},
+                     {"tokens": {"refresh_token": "saved-refresh"}},
+                     {"OPENAI_API_KEY": "saved-key"}):
+            auth_path.write_text(json.dumps(auth))
+            self.assertTrue(store.has_stored_credentials(directory))
+        with patch.object(Path, "read_bytes", side_effect=PermissionError("fixture")):
+            with self.assertRaises(PermissionError):
+                store.has_stored_credentials(directory)
+
+    def test_add_retries_incomplete_login_through_both_entry_points(self):
+        from codex_monitor import cli
+        from types import SimpleNamespace
+        name = "retry-entry"
+        directory = paths.accounts_dir() / name
+        directory.mkdir(exist_ok=True)
+        auth_path = directory / "auth.json"
+        auth_path.write_text("{}")
+        sentinel = directory / "config.toml"
+        sentinel.write_text("keep me")
+        fake_flow = SimpleNamespace(phase="failed", error="fixture failure", result_identity=None, start=lambda: None)
+        monitor = Monitor()
+        try:
+            with patch("codex_monitor.monitor.BrowserLogin", return_value=fake_flow):
+                self.assertEqual(monitor.start_login(name)["phase"], "failed")
+                self.assertEqual(monitor.start_login(name)["phase"], "failed")
+            args = SimpleNamespace(name=name, force=False, device=False, no_open=True)
+            with patch("codex_monitor.cli._run_login") as login:
+                cli.cmd_add(args)
+                login.assert_called_once_with(directory, name, device=False, open_browser=False)
+            self.assertEqual(auth_path.read_text(), "{}")
+            self.assertEqual(sentinel.read_text(), "keep me")
+            auth_path.write_text(json.dumps({"tokens": {"access_token": "saved-token"}}))
+            with self.assertRaises(store.StoreError):
+                monitor.start_login(name)
+            with patch("codex_monitor.cli._run_login") as login, patch("codex_monitor.cli.die", side_effect=SystemExit):
+                with self.assertRaises(SystemExit):
+                    cli.cmd_add(args)
+                login.assert_not_called()
+        finally:
+            import shutil
+            shutil.rmtree(directory)
+
     def test_adopt_and_activate(self):
         msg = store.adopt()
         self.assertIsNotNone(msg)

@@ -60,6 +60,26 @@ def read_json(path: Path) -> Optional[dict]:
         return None
 
 
+def has_stored_credentials(directory: Path) -> bool:
+    # A file left by a failed login is not a completed profile. Preserve real
+    # credentials even when expired; server validity belongs to re-login.
+    try:
+        data = (directory / "auth.json").read_bytes()
+    except FileNotFoundError:
+        return False
+    try:
+        auth = json.loads(data)
+    except (ValueError, UnicodeError):
+        return False
+    if not isinstance(auth, dict):
+        return False
+    tokens = auth.get("tokens")
+    if not isinstance(tokens, dict):
+        tokens = {}
+    return any(isinstance(value, str) and bool(value.strip()) for value in
+               (auth.get("OPENAI_API_KEY"), tokens.get("access_token"), tokens.get("refresh_token")))
+
+
 def sanitize(name: str) -> str:
     keep = "".join(c if (c.isalnum() or c in "._-") else "-" for c in name.strip()).strip("._-")
     if not keep:

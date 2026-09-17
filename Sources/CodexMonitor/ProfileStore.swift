@@ -100,6 +100,22 @@ final class ProfileStore {
         return out.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
     }
 
+    static func hasStoredCredentials(in directory: URL) throws -> Bool {
+        let url = directory.appendingPathComponent("auth.json")
+        let data: Data
+        do { data = try Data(contentsOf: url) }
+        catch let error as NSError where error.domain == NSCocoaErrorDomain && error.code == NSFileReadNoSuchFileError {
+            return false
+        }
+        guard let object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return false }
+        let tokens = object["tokens"] as? [String: Any]
+        return [object["OPENAI_API_KEY"], tokens?["access_token"], tokens?["refresh_token"]]
+            .contains { value in
+                guard let text = value as? String else { return false }
+                return !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+    }
+
     // Keep aliases on disk; show one representative per workspace and user.
     static func displayProfiles(_ profiles: [Profile]) -> [Profile] {
         var result: [Profile] = []

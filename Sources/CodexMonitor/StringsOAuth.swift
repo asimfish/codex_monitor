@@ -38,6 +38,8 @@ extension L {
     static func exportedAuth(_ name: String, _ path: String) -> String { "已把「\(name)」的 auth.json 导出到 \(path)" }
     static func copyFailed(_ err: String) -> String { "复制/导出失败：\(err)" }
 
+    static func savedLoginExists(_ name: String) -> String { "账号「\(name)」已有登录凭证，请从账号菜单选择“重新登录此账号”。" }
+
     // Re-login
     static let reloginEllipsis = "重新登录此账号…"
     static let reloginHelp = "会话被服务端作废时，用同一个目录重新走一遍登录，覆盖旧凭证"

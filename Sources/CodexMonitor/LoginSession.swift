@@ -320,7 +320,7 @@ final class LoginSession: ObservableObject {
 
     private func completeFromDisk() {
         let authURL = directory.appendingPathComponent("auth.json")
-        guard let auth = try? AuthFile.load(from: authURL), auth.isChatGPTAuth || auth.openaiApiKey != nil else {
+        guard let auth = try? AuthFile.load(from: authURL), auth.hasLoginCredentials else {
             phase = .failed(L.errAuthParse(authURL.path))
             return
         }
@@ -473,8 +473,13 @@ final class LoginWindowController: NSObject, NSWindowDelegate {
         let name = monitor.store.sanitise(raw)
         guard !name.isEmpty else { return }
         let dir = monitor.store.accountsRoot.appendingPathComponent(name)
-        if FileManager.default.fileExists(atPath: dir.appendingPathComponent("auth.json").path) {
-            panel.info(title: L.addAccountTitle, message: L.errAlreadyExists(name))
+        do {
+            if try ProfileStore.hasStoredCredentials(in: dir) {
+                panel.info(title: L.addAccountTitle, message: L.savedLoginExists(name))
+                return
+            }
+        } catch {
+            panel.info(title: L.addAccountTitle, message: error.localizedDescription)
             return
         }
         let s = LoginSession(name: name, directory: dir)

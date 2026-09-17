@@ -31,6 +31,12 @@ struct AuthFile: Codable {
 
     var lastRefreshDate: Date? { lastRefresh.flatMap(ISO8601.parse) }
     var isChatGPTAuth: Bool { tokens?.accessToken != nil }
+    var hasLoginCredentials: Bool {
+        [tokens?.accessToken, openaiApiKey].contains { value in
+            guard let value = value else { return false }
+            return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
 
     static func load(from url: URL) throws -> AuthFile {
         let data = try Data(contentsOf: url)

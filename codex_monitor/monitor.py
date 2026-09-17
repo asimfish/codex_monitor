@@ -334,7 +334,7 @@ class Monitor:
         else:
             name = store.sanitize(name)
             directory = paths.accounts_dir() / name
-            if (directory / "auth.json").exists():
+            if store.has_stored_credentials(directory):
                 raise StoreError(f"account '{name}' already exists")
         flow = BrowserLogin(directory) if mode == "browser" else DeviceCodeLogin(directory)
         self.login, self.login_name, self.login_mode, self.login_relogin = flow, name, mode, relogin

@@ -312,6 +312,27 @@ try! "model = \"x\"\nchatgpt_base_url = \"https://relay.example.com/backend-api\
     .write(to: store.codexHome.appendingPathComponent("config.toml"), atomically: true, encoding: .utf8)
 check(store.chatGPTBaseURL().absoluteString == "https://relay.example.com/backend-api", "base url from config: \(store.chatGPTBaseURL())")
 
+// Failed login attempts must not reserve a name just by leaving auth.json behind.
+let retryDir = store.accountsRoot.appendingPathComponent("retry-fixture")
+try! fm.createDirectory(at: retryDir, withIntermediateDirectories: true)
+let retryAuth = retryDir.appendingPathComponent("auth.json")
+check(try! !ProfileStore.hasStoredCredentials(in: retryDir), "empty login directory can retry")
+for contents in ["", "{", "{}", "[]", "{\"tokens\":{}}", "{\"tokens\":{\"access_token\":\"\"}}"] {
+    try! Data(contents.utf8).write(to: retryAuth)
+    check(try! !ProfileStore.hasStoredCredentials(in: retryDir), "incomplete credential file can retry")
+}
+try! JSONSerialization.data(withJSONObject: makeAuth(email: "retry@example.com", account: "retry", lastRefresh: now)).write(to: retryAuth)
+check(try! ProfileStore.hasStoredCredentials(in: retryDir), "completed account remains protected")
+for contents in ["{\"tokens\":{\"refresh_token\":\"saved-refresh\"}}", "{\"OPENAI_API_KEY\":\"saved-key\"}"] {
+    try! Data(contents.utf8).write(to: retryAuth)
+    check(try! ProfileStore.hasStoredCredentials(in: retryDir), "saved refresh token or API key remains protected")
+}
+
+let emptyAuth = try! JSONDecoder().decode(AuthFile.self, from: Data("{\"tokens\":{\"access_token\":\"\"}}".utf8))
+check(!emptyAuth.hasLoginCredentials, "empty token cannot complete login")
+let expiredAuth = try! JSONDecoder().decode(AuthFile.self, from: JSONSerialization.data(withJSONObject: makeAuth(email: "old@example.com", account: "old", lastRefresh: now, extra: [:])))
+check(expiredAuth.hasLoginCredentials, "stored credentials recognized without network validation")
+
 // Duplicate aliases are presentation-only: select a usable, recent credential.
 func displayFixture(_ name: String, account: String?, user: String?, email: String?, age: TimeInterval, expired: Bool = false) -> Profile {
     let dir = URL(fileURLWithPath: "/fixture/" + name)

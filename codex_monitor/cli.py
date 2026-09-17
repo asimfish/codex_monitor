@@ -97,7 +97,7 @@ def cmd_list(a: argparse.Namespace) -> None:
 def cmd_add(a: argparse.Namespace) -> None:
     name = store.sanitize(a.name)
     directory = paths.accounts_dir() / name
-    if (directory / "auth.json").exists() and not a.force:
+    if store.has_stored_credentials(directory) and not a.force:
         die(f"account '{name}' already exists; pick another name or use --force to log in again")
     _run_login(directory, name, device=a.device, open_browser=not a.no_open)
 

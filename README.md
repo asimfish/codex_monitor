@@ -114,6 +114,10 @@ bash scripts/install.sh
 
 Use your actual clone directory if it differs. Keep the clone: CLI symlinks point into it, while the native application lives in `~/Applications`. Run `bash scripts/uninstall.sh` to uninstall; stored accounts are retained.
 
+#### Cannot retry the same account name after a failed login?
+
+The updated app reads `auth.json`: empty directories, blank/malformed files, and files without credentials can reuse the same name without deleting the directory. A non-empty access token, refresh token, or API key protects the existing profile from duplicate adds. Use the account menu's re-login action for saved credentials, even when expired; a local file check cannot determine server-side revocation. Read-permission errors stop the operation rather than treating the account as empty. Upgrade older installations using the steps above.
+
 #### Why can the appearance differ from screenshots?
 
 The native panel uses macOS system materials and follows light/dark appearance; dark mode can look nearly black. Accessibility → Display → Reduce transparency replaces transparent areas with solid backgrounds ([Apple documentation](https://support.apple.com/en-ie/guide/mac-help/mchl11ddd4b3/mac)). Screenshots show one system configuration, not a guarantee of identical color or translucency everywhere.
