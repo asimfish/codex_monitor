@@ -170,6 +170,7 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(w.poll(), 2)
         self.assertEqual(w.poll(), 0)
         conn.close()
+        w._conn.close()  # Windows cannot unlink an open SQLite database.
         db_path.unlink()
 
     def test_view_prefers_live_when_newer(self):

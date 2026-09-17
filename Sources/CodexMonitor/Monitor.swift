@@ -166,7 +166,7 @@ final class QuotaMonitor: ObservableObject {
             entries = DemoData.entries()
             lastRefresh = Date()
             tickTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-                Task { @MainActor in self?.clockTick += 1 }
+                Task { @MainActor [weak self] in self?.clockTick += 1 }
             }
             return
         }
@@ -175,14 +175,14 @@ final class QuotaMonitor: ObservableObject {
         Task { await refreshAll() }
         scheduleTimer()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollFiles() }
+            Task { @MainActor [weak self] in self?.pollFiles() }
         }
         tickTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.clockTick += 1 }
+            Task { @MainActor [weak self] in self?.clockTick += 1 }
         }
         pollLive()
         liveTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.pollLive()
                 self?.pollAppServerEvents()
             }
@@ -190,7 +190,7 @@ final class QuotaMonitor: ObservableObject {
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 4_000_000_000)
                 await self?.refreshAll()
             }
@@ -201,7 +201,7 @@ final class QuotaMonitor: ObservableObject {
         refreshTimer?.invalidate()
         let interval = TimeInterval(max(10, refreshIntervalSeconds))
         refreshTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.refreshAll(automatic: true) }
+            Task { @MainActor [weak self] in await self?.refreshAll(automatic: true) }
         }
         refreshTimer?.tolerance = min(5, interval / 10)
     }

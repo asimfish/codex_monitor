@@ -118,7 +118,8 @@ def main() -> None:
         backups = list((sb.accounts / "_backup").glob("auth-c_at_example.com-*.json"))
         assert len(backups) == 1, backups
         assert account_of(backups[0]) == acct_c
-        assert oct(sb.main.stat().st_mode & 0o777) == "0o600"
+        if os.name != "nt":
+            assert oct(sb.main.stat().st_mode & 0o777) == "0o600"
 
         # 4. codex refreshed main (newer last_refresh) -> sync copies it into profile a
         refreshed = make_auth("a@example.com", acct_a, now + timedelta(minutes=5))
@@ -136,7 +137,8 @@ def main() -> None:
         exported = Path(tmp) / "exported.json"
         sb.run("export", "b", str(exported))
         assert account_of(exported) == acct_b
-        assert oct(exported.stat().st_mode & 0o777) == "0o600"
+        if os.name != "nt":
+            assert oct(exported.stat().st_mode & 0o777) == "0o600"
         sb.run("import", "b2", str(exported))
         assert account_of(sb.profile("b2")) == acct_b
         sb.run("remove", "b2", "-y")
@@ -149,12 +151,19 @@ def main() -> None:
         assert cp.returncode != 0 and "nope" in (cp.stderr + cp.stdout)
 
         # 7. env / path helpers
-        assert sb.run("env", "b").stdout.strip() == f"export CODEX_HOME={sb.accounts / 'b'}"
+        env_output = sb.run("env", "b").stdout.strip()
+        if os.name == "nt":
+            assert env_output == f'$env:CODEX_HOME = "{sb.accounts / "b"}"   # PowerShell;  cmd: set CODEX_HOME={sb.accounts / "b"}'
+        else:
+            assert env_output == f"export CODEX_HOME={sb.accounts / 'b'}"
         assert sb.run("path", "b").stdout.strip() == str(sb.profile("b"))
         # env creates shared symlinks only for items that exist in CODEX_HOME
         (sb.home / "config.toml").write_text("model = 'x'\n")
         sb.run("env", "b")
-        assert (sb.accounts / "b" / "config.toml").is_symlink()
+        shared = sb.accounts / "b" / "config.toml"
+        assert shared.read_text() == "model = 'x'\n"
+        if os.name != "nt":
+            assert shared.is_symlink()
 
         # 8. hidden / underscore dirs are ignored as profiles
         write(sb.accounts / "_backup" / "junk" / "auth.json", make_auth("x@example.com", "x" * 36, now))
