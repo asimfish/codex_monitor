@@ -375,15 +375,15 @@ let configSentinel = logoutA.deletingLastPathComponent().appendingPathComponent(
 try! "keep-config".write(to: configSentinel, atomically: true, encoding: .utf8)
 let logoutProfile = store.loadProfiles().first { $0.id == "logout-a" }!
 try! store.signOut(logoutProfile)
-check(!fm.fileExists(atPath: logoutA.path) && !fm.fileExists(atPath: logoutAlias.path), "logout removes duplicate credential copies")
+check((try? Data(contentsOf: logoutA)) == Data("{}\n".utf8) && (try? Data(contentsOf: logoutAlias)) == Data("{}\n".utf8), "logout clears duplicate credentials but keeps placeholders")
 check(!fm.fileExists(atPath: store.mainAuthURL.path), "logout active account clears main login")
 check(fm.fileExists(atPath: logoutB.path) && fm.fileExists(atPath: logoutOtherWorkspace.path), "logout keeps other identities and workspaces")
 check((try! String(contentsOf: configSentinel)) == "keep-config", "logout preserves configuration")
-check(try! !ProfileStore.hasStoredCredentials(in: logoutA.deletingLastPathComponent()), "logged-out name is reusable")
+check(try! !ProfileStore.hasStoredCredentials(in: logoutA.deletingLastPathComponent()), "logged-out profile has no credentials")
 do {
     try store.applyRefreshedTokens(refreshed, to: logoutA, expectedRefreshToken: "rt.fake.logo")
     check(false, "late refresh after logout must fail")
-} catch { check(!fm.fileExists(atPath: logoutA.path), "late refresh cannot recreate auth") }
+} catch { check((try? Data(contentsOf: logoutA)) == Data("{}\n".utf8), "late refresh cannot recreate auth") }
 write(makeAuth(email: "other@example.com", account: "other-account", lastRefresh: now), to: store.mainAuthURL)
 let mainBeforeLogout = try! Data(contentsOf: store.mainAuthURL)
 write(logoutAuth, to: logoutA)

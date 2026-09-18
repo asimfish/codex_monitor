@@ -201,7 +201,7 @@ final class ProfileStore {
         return email.lowercased() == other.lowercased()
     }
 
-    // Remove only live credential files. Preserve directories, sessions and configuration.
+    // Remove live credentials while keeping profile placeholders for re-login.
     func signOut(_ profile: Profile) throws {
         let candidates = loadProfiles() + (loadMain().map { [$0] } ?? [])
         let targets = candidates.filter {
@@ -211,7 +211,11 @@ final class ProfileStore {
         for target in targets {
             let current = load(id: target.id, name: target.name, directory: target.directory, isMain: target.isMain)
             guard current.signature == target.signature else { throw StoreError.io(L.logoutAccountChanged) }
-            try FileManager.default.removeItem(at: target.authURL)
+            if target.isMain {
+                try FileManager.default.removeItem(at: target.authURL)
+            } else {
+                try writeAtomically(Data("{}\n".utf8), to: target.authURL)
+            }
         }
     }
 

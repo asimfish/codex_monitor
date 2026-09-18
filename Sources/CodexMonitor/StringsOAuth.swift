@@ -42,7 +42,7 @@ extension L {
 
     static let logoutAction = "退出登录"
     static func logoutTitle(_ name: String) -> String { "退出「\(name)」？" }
-    static let logoutMessage = "将移除该账号在本机的登录凭证（包括重复存档）；如果它是当前使用账号，也会清除 Codex 当前登录。保留配置、会话记录和历史备份，不会退出其他设备或浏览器。正在运行的 Codex 进程可能仍持有凭证，请自行关闭。之后可用原名称重新添加。"
+    static let logoutMessage = "将移除该账号在本机的登录凭证（包括重复存档）；如果它是当前使用账号，也会清除 Codex 当前登录。账号会保留在列表中，之后可以直接重新登录。配置、会话记录和历史备份也会保留，不会退出其他设备或浏览器。正在运行的 Codex 进程可能仍持有凭证，请自行关闭。"
     static let logoutAccountChanged = "账号凭证已变化，请刷新列表后重试。"
     static let logoutLoginRunning = "请先完成或取消正在进行的登录，再退出账号。"
     static func loggedOut(_ name: String) -> String { "已在本机退出「\(name)」" }
