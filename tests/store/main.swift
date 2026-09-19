@@ -317,6 +317,7 @@ check(store.chatGPTBaseURL().absoluteString == "https://relay.example.com/backen
 let retryDir = store.accountsRoot.appendingPathComponent("retry-fixture")
 try! fm.createDirectory(at: retryDir, withIntermediateDirectories: true)
 let retryAuth = retryDir.appendingPathComponent("auth.json")
+check(store.loadProfiles().contains { $0.name == "retry-fixture" }, "incomplete login directory remains visible")
 check(try! !ProfileStore.hasStoredCredentials(in: retryDir), "empty login directory can retry")
 for contents in ["", "{", "{}", "[]", "{\"tokens\":{}}", "{\"tokens\":{\"access_token\":\"\"}}"] {
     try! Data(contents.utf8).write(to: retryAuth)

@@ -123,8 +123,9 @@ def profiles() -> List[Profile]:
     for d in sorted(root.iterdir(), key=lambda p: p.name.lower()):
         if not d.is_dir() or d.name.startswith(("_", ".")):
             continue
-        if (d / "auth.json").exists():
-            out.append(_load(d.name, d, False))
+        # Keep empty/incomplete profile directories visible so a failed re-login
+        # does not make the account disappear from the list.
+        out.append(_load(d.name, d, False))
     return out
 
 

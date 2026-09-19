@@ -94,7 +94,8 @@ final class ProfileStore {
             let name = dir.lastPathComponent
             if name.hasPrefix("_") || name.hasPrefix(".") { continue }
             guard (try? dir.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
-            guard fm.fileExists(atPath: dir.appendingPathComponent("auth.json").path) else { continue }
+            // Keep the directory visible even when a failed/restarted login removed
+            // auth.json. The row is still useful for retrying login under the same name.
             out.append(load(id: name, name: name, directory: dir, isMain: false))
         }
         return out.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
