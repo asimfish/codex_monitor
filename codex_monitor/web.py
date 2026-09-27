@@ -54,7 +54,7 @@ pre.log{font:10px ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;bac
 /* Spacious dashboard, with the same compact cards on narrow screens. */
 :root{--bg:#f4f6f9;--accent:#2563eb;--green:#16875b;--orange:#b86a10;--red:#d64045;--shadow:0 6px 24px rgba(30,50,80,.045)}
 body{font-size:14px;line-height:1.5;background:radial-gradient(ellipse at top left,rgba(37,99,235,.06),transparent 55%),var(--bg);min-height:100vh}
-.wrap{max-width:1240px;padding:36px 32px 24px}
+.wrap{max-width:1440px;padding:36px 32px 24px}
 header{gap:12px;margin-bottom:28px;flex-wrap:wrap}header h1{font-size:24px;letter-spacing:-.7px;font-weight:750}
 header h1:before{content:'C';display:inline-grid;place-items:center;width:38px;height:38px;margin-right:12px;border-radius:12px;background:var(--fg);color:var(--card);font-size:22px}
 button,select{padding:8px 12px;border-radius:9px;transition:background .15s,box-shadow .15s}button:hover{box-shadow:0 2px 8px var(--line);background:var(--bg)}button.primary:hover{background:#1d4ed8}
@@ -63,16 +63,18 @@ button.mini{padding:5px 9px;font-size:12px}button.link{padding:6px 8px}
 .overview{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:28px}
 .stat{padding:18px 22px;background:var(--card);border:1px solid var(--line);border-radius:14px}.stat b{display:block;font-size:28px;letter-spacing:-1px;font-variant-numeric:tabular-nums}.stat span{color:var(--muted);font-size:12px}
 .toolbar{display:flex;align-items:center;gap:16px;margin:0 0 20px}.toolbar p{flex:1;color:var(--muted);margin:0}.toolbar input{width:280px;padding:10px 14px;background:var(--card)}
-.account-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:start;gap:18px}.section-label{margin:26px 0 14px;font-size:13px;font-weight:600}
+.account-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));align-items:start;gap:18px}.section-label{margin:26px 0 14px;font-size:13px;font-weight:600}
 .card{min-width:0;margin:0;padding:22px;border-radius:16px;box-shadow:var(--shadow)}.card.active{border-color:var(--accent);border-top:3px solid var(--accent)}
 .card>.row{flex-wrap:wrap;row-gap:10px;margin-bottom:18px}.title{min-width:0;max-width:100%;font-size:15px}.badge{padding:3px 8px;letter-spacing:.3px}.small{font-size:12px}.tiny{font-size:11px}
-.win{margin-top:14px}.bar{height:9px}.win .pct{width:auto;min-width:74px;font-size:12px}.win .lbl{width:48px;flex-shrink:0}
+.windows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 18px}.win{margin:0;min-width:0}.bar{height:9px}.win .pct{width:auto;min-width:74px;font-size:12px}.win .lbl{width:48px;flex-shrink:0}
 .grid{gap:16px;margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}.grid>div{min-width:0}.grid .k{font-size:11px;margin-bottom:4px}.grid .v{font-size:12px;overflow-wrap:anywhere}
 .err{margin-top:16px;padding:10px 12px;border-radius:8px;background:var(--bg);overflow-wrap:anywhere}.compact{margin:0;min-width:0;flex-wrap:wrap;padding:16px;border-radius:14px}.compact .title{flex-basis:100px}
 .menu .dd{min-width:220px;padding:6px;box-shadow:0 12px 32px rgba(0,0,0,.15)}.menu.open{z-index:10}.modal{z-index:100;backdrop-filter:blur(5px);overflow:auto}.modal .box{padding:26px;max-width:480px;max-height:90vh;overflow:auto;box-shadow:0 24px 80px rgba(0,0,0,.2)}
 footer{gap:16px;flex-wrap:wrap;margin-top:28px;padding-top:18px;border-top:1px solid var(--line)}#foot{overflow-wrap:anywhere;min-width:0}pre.log{padding:16px;max-height:260px}.empty{grid-column:1/-1;padding:40px;text-align:center}
 @media(prefers-color-scheme:dark){:root{--bg:#10151e;--card:#19212d;--fg:#e6edf7;--muted:#98a7bd;--accent:#78a6ff;--green:#54c99c;--orange:#f1b967;--red:#ff8188}button.primary{background:#315fbb}.card{box-shadow:none}}
-@media(max-width:760px){.wrap{padding:20px 16px}.account-grid{grid-template-columns:1fr}.toolbar{flex-wrap:wrap}.toolbar input{width:100%}.overview{gap:8px}.stat{padding:12px}.stat b{font-size:24px}header h1{font-size:20px}header #last{order:5;width:100%}.card{padding:18px}.section-label{margin-top:22px}}
+@media(max-width:1120px){.account-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:900px){.account-grid{grid-template-columns:1fr}}
+@media(max-width:760px){.wrap{padding:20px 16px}.account-grid{grid-template-columns:1fr}.windows{grid-template-columns:1fr}.toolbar{flex-wrap:wrap}.toolbar input{width:100%}.overview{gap:8px}.stat{padding:12px}.stat b{font-size:24px}header h1{font-size:20px}header #last{order:5;width:100%}.card{padding:18px}.section-label{margin-top:22px}}
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
@@ -151,7 +153,7 @@ function card(a, collapsible){
   const plan = `<span class="badge">${esc(a.plan_label)}</span>`;
   const right = a.active ? `<span class="small" style="color:var(--accent)">${t('inUse')}</span>${a.is_main ? `<button class="link mini" data-act="save" data-n="main">${t('saveAs')}</button>` : ''}`
                          : `<button class="mini" data-act="switch" data-n="${esc(a.name)}">${t('switch')}</button>${collapsible ? `<button class="mini" data-act="collapse" data-n="${esc(a.name)}">&#8963;</button>` : ''}`;
-  const wins = a.windows.map(windowRow).join('') || (a.error ? '' : `<div class="muted small" style="margin-top:6px"><span class="spin"></span> ${t('loading')}</div>`);
+  const wins = a.windows.length ? `<div class="windows">${a.windows.map(windowRow).join('')}</div>` : (a.error ? '' : `<div class="muted small" style="margin-top:6px"><span class="spin"></span> ${t('loading')}</div>`);
   const extras = a.extras.filter(x => x.windows.length).map(x => `<div class="tiny muted" style="margin-top:6px">${esc(x.name)} ${x.windows.map(w => `<span class="chip">${esc(wl(w.label))} ${t('left')} ${pct(w.remaining_percent)}</span>`).join('')}</div>`).join('');
   const src = a.source ? `<div class="tiny" style="margin-top:6px;color:${a.source==='live' ? 'var(--green)' : 'var(--muted)'}">${a.source==='live' ? t('sourceLive') : t('sourceApi')} ${fmtTime(a.source_at)}</div>` : '';
   const rc = a.reset_credits == null ? '—' : `${a.reset_credits} ${t('times')}` + (a.reset_credits_earliest_expiry ? ` · ${t('earliest')} ${fmtDate(a.reset_credits_earliest_expiry)}` : '');

@@ -407,6 +407,7 @@ class StoreAndWebTests(unittest.TestCase):
             self.assertIn("Codex Monitor", page)
             self.assertIn("\u989d\u5ea6", page)  # Chinese strings embedded
             self.assertIn("account-grid", page)
+            self.assertIn("class=\"windows\"", page)
             self.assertIn("dashboardSubtitle", page)
             self.assertIn("searchAccounts", page)
             req = urllib.request.Request(base + "/api/switch", data=json.dumps({"name": "b"}).encode(), method="POST",
