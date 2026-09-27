@@ -18,10 +18,11 @@ mkdir -p "$BIN_DIR"
 for name in codex-monitor codex-acct; do
   destination="$BIN_DIR/$name"
   if [[ -e "$destination" && ! -L "$destination" ]]; then
-    echo "Keeping existing file $destination; use $INSTALL_DIR/venv/bin/$name instead."
-  else
-    ln -sfn "$INSTALL_DIR/venv/bin/$name" "$destination"
+    backup="$destination.previous-$(date +%Y%m%d-%H%M%S)"
+    mv "$destination" "$backup"
+    echo "Moved existing $destination to $backup"
   fi
+  ln -sfn "$INSTALL_DIR/venv/bin/$name" "$destination"
 done
 printf '\nInstalled. Start the dashboard:\n  "%s/venv/bin/codex-monitor" serve\n' "$INSTALL_DIR"
 printf 'Optional start at login:\n  "%s/venv/bin/codex-monitor" autostart install\n' "$INSTALL_DIR"

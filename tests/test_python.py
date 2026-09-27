@@ -406,6 +406,9 @@ class StoreAndWebTests(unittest.TestCase):
             page = urllib.request.urlopen(base + f"/?token={token}", timeout=5).read().decode("utf-8")
             self.assertIn("Codex Monitor", page)
             self.assertIn("\u989d\u5ea6", page)  # Chinese strings embedded
+            self.assertIn("account-grid", page)
+            self.assertIn("dashboardSubtitle", page)
+            self.assertIn("searchAccounts", page)
             req = urllib.request.Request(base + "/api/switch", data=json.dumps({"name": "b"}).encode(), method="POST",
                                          headers={"X-Token": token, "Content-Type": "application/json"})
             resp = json.loads(urllib.request.urlopen(req, timeout=5).read())
