@@ -1,6 +1,15 @@
 """UI strings for the web dashboard (English + Chinese; picked from the browser language)."""
 
 EN = {
+    "dashboardSubtitle": "Your accounts, quota and sessions in one place.",
+    "searchAccounts": "Search accounts or plans…",
+    "totalAccounts": "Total accounts",
+    "activeAccounts": "Currently active",
+    "needsAttention": "Needs attention",
+    "currentAccounts": "Current account",
+    "noMatches": "No matching accounts",
+    "language": "Language",
+
     "title": "Codex Monitor",
     "refreshNow": "Refresh now",
     "addAccount": "Add account",
@@ -79,6 +88,15 @@ EN = {
 }
 
 ZH = {
+    "dashboardSubtitle": "集中查看账号额度与登录状态",
+    "searchAccounts": "搜索账号或套餐…",
+    "totalAccounts": "全部账号",
+    "activeAccounts": "正在使用",
+    "needsAttention": "需要关注",
+    "currentAccounts": "当前账号",
+    "noMatches": "没有匹配的账号",
+    "language": "语言",
+
     "title": "Codex 额度",
     "refreshNow": "立即刷新",
     "addAccount": "添加账号",

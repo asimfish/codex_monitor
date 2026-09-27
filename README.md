@@ -200,6 +200,26 @@ codex-monitor export work ~/Desktop/   # copy an auth.json out for another machi
 - Headless box? `codex-monitor add work --no-open` prints the login URL; open it on any machine with a browser — the redirect goes to `localhost:1455` **on the machine running codex-monitor**, so forward the port (`ssh -L 1455:localhost:1455 box`) or use `--device`.
 </details>
 
+### Linux installation
+
+The web dashboard supports Linux, with a responsive two-column layout, account search, status overview and dark mode. No macOS app is required.
+
+```bash
+# Debian / Ubuntu prerequisites
+sudo apt install python3 python3-venv git
+git clone https://github.com/asimfish/codex_monitor.git
+cd codex_monitor
+bash scripts/install-linux.sh
+~/.local/share/codex-monitor/venv/bin/codex-monitor serve
+```
+
+Open the complete localhost URL printed by the server, including its access token. The installer uses an isolated virtual environment; it does not change system Python. Accounts come from the Linux user's `~/.codex-accounts` and `~/.codex`, not from your Mac automatically. To upgrade, run `git pull --ff-only`, rerun the installer and restart the dashboard.
+
+Optional: `codex-monitor autostart install` uses a systemd user service or XDG desktop autostart. Add `~/.local/bin` to PATH or use the absolute executable path above. Check systemd logs with `journalctl --user -u codex-monitor -n 30`; logs contain the local access URL. Remove autostart with `codex-monitor autostart remove`.
+
+For a headless server, run `codex-monitor serve --no-browser`, forward the dashboard with `ssh -L 7860:127.0.0.1:7860 user@server`, and open the printed URL locally. Browser account login separately requires forwarding port 1455, which must also be free on your local machine.
+
+
 ### 3.3 Verification scope and downloads
 
 [Successful CI for pinned version 6726148](https://github.com/asimfish/codex_monitor/actions/runs/35210407282) verifies:

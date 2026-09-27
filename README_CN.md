@@ -198,6 +198,27 @@ codex-monitor export work ~/Desktop/   # 拷一份 auth.json 给别的机器
 - 无图形的服务器？`codex-monitor add work --no-open` 只打印登录链接，在任何有浏览器的机器上打开——但回调会打到**运行 codex-monitor 的那台机器**的 `localhost:1455`，需要转发端口（`ssh -L 1455:localhost:1455 box`）或改用 `--device`。
 </details>
 
+### Linux 安装与启动
+
+网页版支持 Linux，不依赖 macOS 原生窗口。桌面宽屏显示双列账号卡片，小屏自动单列，支持搜索账号、深色模式和账号状态概览。
+
+```bash
+# Debian / Ubuntu 首次使用先安装 Python 环境
+sudo apt install python3 python3-venv git
+
+git clone https://github.com/asimfish/codex_monitor.git
+cd codex_monitor
+bash scripts/install-linux.sh
+~/.local/share/codex-monitor/venv/bin/codex-monitor serve
+```
+
+打开终端输出的完整 `http://127.0.0.1:7860/?token=…` 地址。账号读取自当前 Linux 用户的 `~/.codex-accounts` 和 `~/.codex`；不会自动同步 Mac 上的账号。更新时在源码目录运行 `git pull --ff-only`，重新执行安装脚本，再重启网页服务。
+
+可选自启动：运行 `~/.local/share/codex-monitor/venv/bin/codex-monitor autostart install`。支持 systemd 用户服务；没有 systemd 用户会话时使用 XDG 桌面登录自启动。systemd 日志：`journalctl --user -u codex-monitor -n 30`（包含本地访问链接，请勿公开）。停止自启动：`codex-monitor autostart remove`。
+
+无桌面 Linux：在服务器运行 `codex-monitor serve --no-browser`，从本机执行 `ssh -L 7860:127.0.0.1:7860 user@server`，再用服务器输出的完整链接访问。这里的 7860 是网页端口；浏览器账号登录另外使用 1455，远程浏览器登录还需转发 `-L 1455:127.0.0.1:1455`，且本机该端口必须空闲。
+
+
 ### 3.3 验证范围与下载
 
 [固定版本 6726148 的成功 CI](https://github.com/asimfish/codex_monitor/actions/runs/35210407282) 验证了：
