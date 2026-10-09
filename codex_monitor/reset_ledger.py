@@ -6,6 +6,7 @@ import json
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 from .identity import format_iso, now_utc, parse_iso
 from .locking import LockBusyError, file_lock
@@ -20,7 +21,7 @@ def _request_id(value: object) -> bool:
 
 
 class ResetOperation:
-    def __init__(self, path: Path, record: dict, request_id: str):
+    def __init__(self, path: Path, record: dict, request_id: str) -> None:
         self.path, self.record, self.request_id = path, record, request_id
         self.result = record["results"].get(request_id)
         self.retrying = record["pending"] == request_id
@@ -45,7 +46,7 @@ class ResetOperation:
 
 
 class ResetLedger:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path) -> None:
         self.root = root / "_reset_requests"
 
     def _path(self, account: str) -> Path:
@@ -80,7 +81,7 @@ class ResetLedger:
         return {"pending": record["pending"], "last_reset_at": parse_iso(record.get("last_reset_at"))}
 
     @contextmanager
-    def operation(self, account: str, request_id: str):
+    def operation(self, account: str, request_id: str) -> Iterator[ResetOperation]:
         self.root.mkdir(parents=True, exist_ok=True)
         path = self._path(account)
         try:

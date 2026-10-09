@@ -14,7 +14,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import ContextManager, List, Optional
 
 from . import paths
 from .identity import identity
@@ -92,7 +92,7 @@ def sanitize(name: str) -> str:
     return keep
 
 
-def auth_lock(path: Path, blocking: bool = True):
+def auth_lock(path: Path, blocking: bool = True) -> ContextManager[None]:
     """Keep archive locks outside movable account directories, including on Windows."""
     canonical = path.resolve()
     if canonical.parent.parent == paths.accounts_dir().resolve():
