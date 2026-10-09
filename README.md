@@ -139,15 +139,16 @@ git rev-parse HEAD
 
 #### Reproduce a specific source version
 
-This pins commit `fcf115f`, which includes native tag creation, editing and deletion, in a new directory and builds/tests it without replacing the installed application:
+This pins commit `31948b8`, which includes native tag editing and individual account archive removal, in a new directory and builds/tests it without replacing the installed application:
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach fcf115f47ab6bb3d4bbdee665d08a2eb5c98bd29
+git checkout --detach 31948b860476fc34a9a7acf68ec984c47a80efff
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
+python3 tests/test_removal.py
 bash scripts/build.sh
 ```
 
@@ -156,6 +157,14 @@ Run `bash scripts/install.sh` afterward only to install that version; this repla
 Scrolling, automatic/manual ordering, and duplicate-profile consolidation are native-widget features. Duplicate aliases for the same workspace and user appear once; files remain on disk. The active account stays pinned, with usable quota and unexpired credentials preferred among other accounts.
 
 The native widget supports adding, editing and deleting tags. Expand the widget to find **添加标签 / 编辑标签** on each account card, or use **编辑标签** in its account menu. Follow the upgrade steps above to rebuild and install an updated native app; pulling source or restarting the web dashboard does not replace an installed app.
+
+**Clean up duplicate archives:** each account menu has **删除账号…** (Delete account). Open **管理账号** (Manage accounts) at the bottom of the widget or in settings to see every stored directory, including aliases merged in the widget. Names, emails and paths make the selected archive clear. After confirmation, only that directory moves to `~/.codex-accounts/_deleted/<unique-id>/<original-name>` (under `CODEX_ACCOUNTS_DIR` when overridden); other aliases and the current main login remain. The main-only login has no delete entry; use logout to sign out.
+
+<details><summary>Manage accounts window (fabricated accounts)</summary>
+
+<img src="docs/screenshots/native-account-manager.png" alt="Choose one account archive by name to delete" width="540">
+
+</details>
 
 ### 3.2 Any OS — web dashboard + CLI (Python 3.8+, no dependencies)
 
@@ -176,7 +185,7 @@ Accounts with remaining quota, valid credentials and no request error appear fir
 
 **Custom red tags (native widget and web dashboard):** click **Add tag / Edit tags** at the bottom of any account card, or click an existing red tag. Type a new tag and press Enter or **Add tag**. Edit existing text directly; delete with the trash button in the native editor or `×` on the web, then **Save**. Each account allows up to 8 tags of 30 characters each; web search also matches tags. Optionally mark an account unavailable: the web puts it at the end and the native widget puts it behind the other accounts, while keeping the active account pinned. Uncheck and save to restore sorting. Tag text alone does not change availability.
 
-The native widget and web dashboard automatically sync saved tags when they use the same account directory. Tags are stored in `~/.codex-accounts/_annotations.json` (under `CODEX_ACCOUNTS_DIR` when overridden). They survive refresh, restart and re-login to the same profile name; tag edits never modify `auth.json`. Keep unusable profiles in the list and label or re-login to them instead of deleting their directories.
+The native widget and web dashboard automatically sync saved tags when they use the same account directory. Tags are stored in `~/.codex-accounts/_annotations.json` (under `CODEX_ACCOUNTS_DIR` when overridden). They survive refresh, restart and re-login to the same profile name; tag edits never modify `auth.json`. Keep unusable profiles when you want to label or re-login to them; use Delete account to clean up duplicate archives.
 
 <p align="center"><img src="docs/screenshots/dashboard-zh.png" alt="Usable-first multicolumn dashboard with fabricated accounts" width="1000"></p>
 
@@ -192,6 +201,8 @@ The native widget and web dashboard automatically sync saved tags when they use 
 <img src="docs/screenshots/dashboard-tags-zh.png" alt="Edit red tags and optionally mark an account unavailable" width="480">
 
 </details>
+
+**Delete in the web dashboard:** account card `⋯` → **Delete account…** → confirm. Empty or signed-out profiles can also be removed; finish or cancel a pending login first. To undo a deletion, move the original account folder from `_deleted` back to the account-directory root with its original name, then refresh. Its saved tags return too. Deletion removes the selected archive from the list; logout keeps a row for re-login.
 
 The same things from the terminal:
 
@@ -246,7 +257,7 @@ For a headless server, run `codex-monitor serve --no-browser`, forward the dashb
 
 ### 3.3 Verification scope and downloads
 
-[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `fcf115f` or newer code. The checks cover:
+[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `31948b8` or newer code. The checks cover:
 
 | Check | Verified environment | Limits |
 |---|---|---|
@@ -265,6 +276,7 @@ For the compiled app, open the CI link above → the latest successful run → *
 | Active card | quota bars per window, reset time + countdown, per-model limits, data-source line (`live · from Codex session event hh:mm:ss` or `API · fetched hh:mm:ss`), reset credits, subscription expiry, token validity, last refresh |
 | Other accounts | one-line rows (click a row to expand, ˄ to collapse) or **Expand all / Collapse all**; each has **Switch** and a ⧉ menu: copy `auth.json` contents, copy path, reveal in Finder, export…, re-login… |
 | Account tags | Add/edit controls on every card; edit existing text, add new tags or delete with the trash button, then save to sync with the web |
+| Manage accounts | Open from the widget footer or settings to see all archive names, emails and paths; remove individual aliases with a local backup |
 | Strip | status dot, vertical quota bar, remaining %, short countdown; only the bottom arrow expands (the rest just drags) |
 
 Colours: green > 50 % remaining, orange 20–50 %, red ≤ 20 % or limit reached; yellow dot = showing cached data; grey = not loaded yet.
@@ -280,6 +292,7 @@ codex-monitor save main             # archive the current ~/.codex login as an a
 codex-monitor add work              # browser login into ~/.codex-accounts/work (private window; no ChatGPT setting needed)
 codex-monitor add work --device     # device-code login instead (see note below)
 codex-monitor relogin work          # sign the same account in again when its session was revoked
+codex-monitor remove work -y        # move only this archive to _deleted; keep current login and other aliases
 codex-monitor import old ~/Downloads/auth.json   # bring in an auth.json you already have
 codex-monitor list                  # table: email / plan / token expiry / subscription / which one is active
 codex-monitor status                # fetch quota for every account: remaining %, reset time, reset credits
@@ -354,6 +367,7 @@ scripts/build.sh        swiftc build + ad-hoc codesign;  scripts/install.sh / un
 tests/test_python.py    parsing, tailer, views, OAuth (fake callback), auto-refresh on 401, app-server log trigger, web API, simulated Windows branches
 tests/test_cli.py       sandboxed end-to-end test of the CLI (temp CODEX_HOME, fake JWTs, no network)
 tests/test_dashboard.py sorting, persistent/validated tags, authenticated API and additional quota
+tests/test_removal.py   alias deletion/recovery, stale selection/path protection, pending-login denial, authenticated API and late refresh checks
 tests/check_web_ui.mjs  real Chrome layout, light/dark, EN/ZH, tag editing/search (Node 24, no npm dependencies)
 tests/linux_smoke.sh    Linux installer, installed dashboard restart/tag persistence and autostart checks
 tests/run_store_tests.sh  Swift tests (macOS)
@@ -361,7 +375,7 @@ tests/run_annotations_tests.sh  native tag validation, Swift/Python interoperabi
 ```
 
 ```bash
-python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py
+python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py && python3 tests/test_removal.py
 node tests/check_web_ui.mjs                                        # Node 24 + Chrome; override with CHROME_BIN
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS, Swift side

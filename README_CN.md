@@ -137,15 +137,16 @@ git rev-parse HEAD
 
 #### 复现一个确定的源码版本
 
-下面锁定到包含原生标签增删改功能的 `fcf115f` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
+下面锁定到包含原生标签增删改和重复存档删除功能的 `31948b8` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach fcf115f47ab6bb3d4bbdee665d08a2eb5c98bd29
+git checkout --detach 31948b860476fc34a9a7acf68ec984c47a80efff
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
+python3 tests/test_removal.py
 bash scripts/build.sh
 ```
 
@@ -154,6 +155,14 @@ bash scripts/build.sh
 原生悬窗支持标签的添加、修改和删除。展开悬窗后，每张账号卡片底部都有“添加标签／编辑标签”，账号操作菜单中也有“编辑标签”。要更新已安装的悬窗，请按上方升级步骤重新编译并安装，仅更新源码或重启网页不会替换原生应用。
 
 滚动列表、自动/手动排序和重复账号合并显示属于原生悬窗功能。同工作区、同用户的重复存档合并显示，原文件保留。当前使用账号固定在顶部，其他账号默认优先显示有额度且凭证未过期的项。
+
+**清理重复账号存档：**每张账号卡片的操作菜单有“删除账号…”。悬窗底部或设置菜单的“管理账号”会列出全部实际存档，显示你给它们起的名字、邮箱和目录，包括已合并显示的重复项；可逐个选择删除。删除前会显示目标目录，只把该目录移入 `~/.codex-accounts/_deleted/<唯一编号>/<原账号名>`（随 `CODEX_ACCOUNTS_DIR` 改变）。其他同邮箱存档和当前主登录保持可用。当前主登录没有“删除账号”入口；请用退出登录来退出会话。
+
+<details><summary>管理账号窗口（模拟账号）</summary>
+
+<img src="docs/screenshots/native-account-manager.png" alt="按存档名称选择删除账号" width="540">
+
+</details>
 
 ### 3.2 任意系统：网页仪表盘 + 命令行（Python 3.8+，零依赖）
 
@@ -174,7 +183,7 @@ codex-monitor autostart install   # 开机自启：LaunchAgent / systemd 用户�
 
 **自定义红色标签（原生悬窗和网页版）：**每张账号卡片底部都有 **添加标签／编辑标签**，点已有红色标签也能打开编辑窗口。输入新标签后点 **添加标签** 或回车；已有标签可直接修改文字。原生悬窗点垃圾桶删除，网页点 `×` 删除，最后点 **保存**。每个账号最多 8 个标签，每个最多 30 字；网页搜索也会匹配标签。如果确认账号不能用，可勾选 **标记为不可用**；网页会排到最后，原生悬窗会在“其他账号”里排到后面，当前使用账号仍固定在顶部。取消勾选并保存可恢复排序。普通标签只作备注，不会自动改变账号状态。
 
-两端使用相同的账号目录时，保存后会自动同步标签。标签保存在账号目录根部的 `~/.codex-accounts/_annotations.json`（设置 `CODEX_ACCOUNTS_DIR` 时随之改变），刷新、重启及同名账号重新登录后保留，编辑标签不会改动 `auth.json`。不要为标记失效账号直接删除账号目录；保持账号在列表中，再加标签或重新登录即可。
+两端使用相同的账号目录时，保存后会自动同步标签。标签保存在账号目录根部的 `~/.codex-accounts/_annotations.json`（设置 `CODEX_ACCOUNTS_DIR` 时随之改变），刷新、重启及同名账号重新登录后保留，编辑标签不会改动 `auth.json`。需要保留失效账号时，可加标签或重新登录；清理重复存档时使用“删除账号”菜单。
 
 <p align="center"><img src="docs/screenshots/dashboard-zh.png" alt="可用账号优先的多列网页看板；截图使用模拟账号" width="1000"></p>
 
@@ -190,6 +199,8 @@ codex-monitor autostart install   # 开机自启：LaunchAgent / systemd 用户�
 <img src="docs/screenshots/dashboard-tags-zh.png" alt="编辑红色标签并手动标记不可用" width="480">
 
 </details>
+
+**网页删除账号：**卡片右上角 `⋯` → **删除账号…** → 确认。空目录、未登录账号也可删除；正在登录的账号须先完成或取消登录。误删后，从账号目录的 `_deleted` 子目录中将原账号文件夹移回账号目录根部，保留原名称，刷新列表即可恢复，原标签也会恢复。它与“退出登录”不同：删除把选中的存档移出列表，退出登录保留列表项以便重新登录。
 
 同样的事在终端里：
 
@@ -245,7 +256,7 @@ bash scripts/install-linux.sh
 
 ### 3.3 验证范围与下载
 
-[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `fcf115f` 或更新代码、且显示成功的运行。检查范围如下：
+[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `31948b8` 或更新代码、且显示成功的运行。检查范围如下：
 
 | 检查 | 已验证环境 | 不代表什么 |
 |---|---|---|
@@ -264,6 +275,7 @@ bash scripts/install-linux.sh
 | 当前账号卡片 | 每个窗口的额度条、重置时间 + 倒计时、附加模型额度、数据来源行（`实时 · 来自 Codex 会话事件 hh:mm:ss` 或 `接口 · 上次拉取 hh:mm:ss`）、重置次数、订阅到期、Token 有效期、凭证最后刷新 |
 | 其他账号 | 一行摘要（点击展开，˄ 收起）或「全部展开 / 全部收起」；每个都有「切换」和 ⧉ 菜单：复制 auth.json 内容、复制路径、在 Finder 中显示、导出…、重新登录… |
 | 账号标签 | 每张卡片底部“添加标签／编辑标签”；直接修改已有文字、添加新标签、点垃圾桶删除，保存后与网页同步 |
+| 管理账号 | 悬窗底部或设置菜单打开；显示每个实际存档的名字、邮箱和目录，逐项删除重复存档；保留本地备份 |
 | 竖条 | 状态点、竖向额度条、剩余 %、短倒计时；只有底部箭头会展开，其他区域只用来拖动 |
 
 颜色：剩余 > 50% 绿，20–50% 橙，≤ 20% 或已达上限红；黄点 = 显示的是缓存；灰 = 尚未加载。
@@ -279,6 +291,7 @@ codex-monitor save main             # 先把现在 ~/.codex 的登录存成一�
 codex-monitor add work              # 浏览器登录到 ~/.codex-accounts/work（隐身窗口；不需要任何 ChatGPT 设置）
 codex-monitor add work --device     # 改用设备码登录（见下方说明）
 codex-monitor relogin work          # 会话被作废时，用同一个账号重新登录覆盖
+codex-monitor remove work -y        # 删除该存档并移入 _deleted 备份；不退出当前登录、不删除其他同邮箱存档
 codex-monitor import old ~/Downloads/auth.json   # 收进一份已有的 auth.json
 codex-monitor list                  # 表格：邮箱 / 套餐 / token 到期 / 订阅到期 / 谁在使用中
 codex-monitor status                # 拉一遍所有账号的额度：剩余 %、重置时间、重置次数
@@ -353,6 +366,7 @@ scripts/build.sh        swiftc 编译 + ad-hoc 签名；scripts/install.sh / uni
 tests/test_python.py    解析、tail、视图、OAuth（伪造回调）、401 自动刷新、app-server 日志触发器、Web API、模拟的 Windows 分支
 tests/test_cli.py       命令行沙盒端到端测试（临时 CODEX_HOME、伪造 JWT、不联网）
 tests/test_dashboard.py 排序、标签持久化/校验、认证接口、额外额度（临时目录、模拟账号）
+tests/test_removal.py   单个重复存档删除、恢复、失效选择/路径保护、登录中阻止、认证接口和延迟刷新检查
 tests/check_web_ui.mjs  Chrome 实测：多列/小屏、深浅色、中英文、标签编辑与搜索（Node 24，无 npm 依赖）
 tests/linux_smoke.sh    Docker 检查：Linux 安装脚本、已安装服务重启/标签保留、自启
 tests/run_store_tests.sh  Swift 测试（macOS）
@@ -360,7 +374,7 @@ tests/run_annotations_tests.sh  原生标签校验、Swift/Python 互读和并�
 ```
 
 ```bash
-python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py
+python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py && python3 tests/test_removal.py
 node tests/check_web_ui.mjs                                        # Node 24 + Chrome；CHROME_BIN 可指定浏览器
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS，Swift 端
