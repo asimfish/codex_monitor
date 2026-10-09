@@ -165,12 +165,14 @@ class Monitor:
                     st.credits = credits
                     self._credits_fetched[acct] = fetched
             usage.save_cache(st.ident.get("account_id", ""), u, st.credits, fetched)
-        except UsageError as e:
+        except (UsageError, OSError) as e:
             with self.lock:
+                if self.states.get(name) is not st:
+                    return
                 st.error = str(e)
-                if e.status == 401 and allow_refresh:
+                if isinstance(e, UsageError) and e.status == 401 and allow_refresh:
                     self._auto_refresh_at[acct] = now_utc()
-                if e.status == 429:
+                if isinstance(e, UsageError) and e.status == 429:
                     self.backoff_until = now_utc() + timedelta(seconds=120)
                     self.note("HTTP 429: pausing automatic refresh for 2 minutes")
 
@@ -292,6 +294,26 @@ class Monitor:
 
     # ------------------------------------------------------------ actions
 
+    def remove_account(self, name: object, revision: object) -> str:
+        with self.lock:
+            if not isinstance(name, str) or name not in self.states or self.states[name].is_main:
+                raise StoreError("Choose a stored account; current main login cannot be deleted")
+            if not isinstance(revision, str) or not revision or len(revision) > 512:
+                raise StoreError("Refresh the list before deleting")
+            if self.login_name == name and getattr(self.login, "phase", "") in ("starting", "waiting", "exchanging"):
+                raise StoreError("Finish or cancel this account's login before deleting")
+            directory = store.directory_for_removal(name)
+            if Path(self.states[name].auth_path).parent.resolve() != directory:
+                raise StoreError("Account location changed; refresh the list")
+            current_identity = identity(store.read_json(directory / "auth.json"))
+            if any(current_identity.get(key, "") != self.states[name].ident.get(key, "")
+                   for key in ("account_id", "email", "auth_mode")):
+                raise StoreError("Account identity changed; refresh the list before deleting")
+            destination = store.remove(name, expected_revision=revision)
+            self.note("removed account '%s' to _deleted backup" % name)
+            self.reload_profiles()
+            return str(destination)
+
     def switch(self, name: str) -> List[str]:
         msgs = store.activate(name)
         for m in msgs:
@@ -412,6 +434,12 @@ class Monitor:
                 account["manual_unavailable"] = labels["unavailable"]
                 account["availability"] = availability(account, state.ident.get("has_tokens", False))
                 account["has_tokens"] = state.ident.get("has_tokens", False)
+                account["removal_revision"] = None
+                if not state.is_main:
+                    try:
+                        account["removal_revision"] = store.removal_revision(name)
+                    except (StoreError, OSError):
+                        pass
                 accounts.append(account)
             accounts.sort(key=account_order)
             data = {

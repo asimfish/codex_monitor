@@ -128,7 +128,7 @@ def apply_refreshed(auth_path: Path, new_tokens: dict) -> None:
         if auth.get("chatgpt_account_id"):
             tokens["account_id"] = auth["chatgpt_account_id"]
     root["last_refresh"] = format_iso(now_utc())
-    atomic_write(auth_path, json.dumps(root, indent=2, sort_keys=True).encode("utf-8"))
+    atomic_write(auth_path, json.dumps(root, indent=2, sort_keys=True).encode("utf-8"), create_parent=False)
 
 
 # ---------------------------------------------------------------- callback server

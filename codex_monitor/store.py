@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,8 +89,9 @@ def sanitize(name: str) -> str:
     return keep
 
 
-def atomic_write(path: Path, data: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def atomic_write(path: Path, data: bytes, create_parent: bool = True) -> None:
+    if create_parent:
+        path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=str(path.parent))
     try:
         with os.fdopen(fd, "wb") as f:
@@ -161,7 +164,7 @@ def adopt() -> Optional[str]:
     data = main.auth_path.read_bytes()
     if target.auth_path.read_bytes() == data:
         return None
-    atomic_write(target.auth_path, data)
+    atomic_write(target.auth_path, data, create_parent=False)
     return f"synced refreshed tokens from {paths.display_path(main.auth_path)} into account '{target.name}'"
 
 
@@ -239,9 +242,48 @@ def export(name: str, dest: Optional[Path]) -> Path:
     return dst
 
 
-def remove(name: str) -> None:
-    p = get_profile(name)
-    shutil.rmtree(p.directory)
+def directory_for_removal(name: str) -> Path:
+    if (not isinstance(name, str) or not name or name.startswith((".", "_"))
+            or any(char in name for char in ("/", "\\", "\0"))):
+        raise StoreError("Choose a named account directory from the list")
+    root = paths.accounts_dir().resolve()
+    directory = root / name
+    try:
+        info = directory.lstat()
+    except FileNotFoundError as error:
+        raise StoreError("Account no longer exists; refresh the list") from error
+    if (not stat.S_ISDIR(info.st_mode) or directory.is_symlink()
+            or getattr(info, "st_file_attributes", 0) & 0x400
+            or directory.resolve().parent != root or directory.resolve() == paths.codex_home().resolve()):
+        raise StoreError("Only ordinary account directories may be deleted; current login and links are protected")
+    return directory
+
+
+def removal_revision(name: str) -> str:
+    directory = directory_for_removal(name)
+    info = directory.stat()
+    try:
+        auth = (directory / "auth.json").stat()
+        stamp = "%s:%s:%s" % (auth.st_ino, auth.st_mtime_ns, auth.st_size)
+    except FileNotFoundError:
+        stamp = "missing"
+    return "%s:%s:%s" % (info.st_dev, info.st_ino, stamp)
+
+
+def remove(name: str, expected_revision: Optional[str] = None) -> Path:
+    directory = directory_for_removal(name)
+    if expected_revision is not None and removal_revision(name) != expected_revision:
+        raise StoreError("Account changed; refresh the list before deleting")
+    deleted = paths.accounts_dir().resolve() / "_deleted"
+    if deleted.is_symlink() or deleted.resolve() != deleted:
+        raise StoreError("Deleted-account backup directory must not be a link")
+    deleted.mkdir(mode=0o700, exist_ok=True)
+    backup = deleted / uuid.uuid4().hex
+    backup.mkdir(mode=0o700)
+    destination = backup / name
+    # Move only the selected alias; symlinked shared config/session targets stay untouched.
+    directory.rename(destination)
+    return destination
 
 
 def ensure_shared_links(directory: Path) -> List[str]:

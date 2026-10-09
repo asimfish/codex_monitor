@@ -402,6 +402,50 @@ do {
     check(false, "stale logout selection must not remove replacement login")
 } catch { check((try! Data(contentsOf: logoutA)) == replacementBytes, "replacement login survives stale logout") }
 
+// Deleting one alias must preserve the current login, other aliases and shared links.
+let deleteDirectory = store.accountsRoot.appendingPathComponent("delete-original")
+let deleteAlias = store.accountsRoot.appendingPathComponent("delete-alias/auth.json")
+let deleteAuth = makeAuth(email: "duplicate@example.com", account: "delete-account", lastRefresh: now)
+write(deleteAuth, to: deleteDirectory.appendingPathComponent("auth.json"))
+write(deleteAuth, to: deleteAlias)
+write(deleteAuth, to: store.mainAuthURL)
+let mainBeforeDelete = try! Data(contentsOf: store.mainAuthURL)
+let aliasBeforeDelete = try! Data(contentsOf: deleteAlias)
+let sharedSentinel = store.codexHome.appendingPathComponent("shared-sentinel.txt")
+try! Data("keep-shared".utf8).write(to: sharedSentinel)
+try! fm.createSymbolicLink(at: deleteDirectory.appendingPathComponent("shared.txt"), withDestinationURL: sharedSentinel)
+let selectedDelete = store.loadProfiles().first { $0.name == "delete-original" }!
+let deletedBackup = try! store.removeProfile(selectedDelete)
+check(!fm.fileExists(atPath: deleteDirectory.path), "deleted alias disappears")
+check((try! Data(contentsOf: deletedBackup.appendingPathComponent("auth.json"))) == mainBeforeDelete, "deleted credentials recoverable byte-for-byte")
+check((try! Data(contentsOf: deleteAlias)) == aliasBeforeDelete && (try! Data(contentsOf: store.mainAuthURL)) == mainBeforeDelete, "other alias and active login survive deletion")
+check((try! Data(contentsOf: sharedSentinel)) == Data("keep-shared".utf8), "shared link target survives deletion")
+check(!store.loadProfiles().contains { $0.name == "delete-original" }, "deleted backup excluded from discovery")
+do {
+    try store.applyRefreshedTokens(refreshed, to: selectedDelete.authURL)
+    check(false, "late token refresh after deletion must fail")
+} catch { check(!fm.fileExists(atPath: deleteDirectory.path), "late refresh cannot recreate deleted alias") }
+let emptyDeleteDir = store.accountsRoot.appendingPathComponent("delete-empty")
+try! fm.createDirectory(at: emptyDeleteDir, withIntermediateDirectories: true)
+let emptyDelete = store.loadProfiles().first { $0.name == "delete-empty" }!
+_ = try! store.removeProfile(emptyDelete)
+check(!fm.fileExists(atPath: emptyDeleteDir.path), "empty failed-login directory can be deleted")
+try! fm.createDirectory(at: emptyDeleteDir, withIntermediateDirectories: true)
+do { _ = try store.removeProfile(emptyDelete); check(false, "stale empty directory selection must fail") }
+catch { check(fm.fileExists(atPath: emptyDeleteDir.path), "replacement empty directory preserved") }
+let staleDelete = store.loadProfiles().first { $0.name == "delete-alias" }!
+write(makeAuth(email: "replacement@example.com", account: "replacement-new-account", lastRefresh: now), to: deleteAlias)
+do { _ = try store.removeProfile(staleDelete); check(false, "stale account selection must fail") }
+catch { check(accountId(at: deleteAlias) == "replacement-new-account", "replacement account preserved") }
+do { _ = try store.removeProfile(store.loadMain()!); check(false, "main login deletion must fail") }
+catch { check((try! Data(contentsOf: store.mainAuthURL)) == mainBeforeDelete, "main login protected") }
+let linkedDelete = store.accountsRoot.appendingPathComponent("delete-link")
+try! fm.createSymbolicLink(at: linkedDelete, withDestinationURL: emptyDeleteDir)
+if let linked = store.loadProfiles().first(where: { $0.name == "delete-link" }) {
+    do { _ = try store.removeProfile(linked); check(false, "linked profile must not be deleted") }
+    catch { check(fm.fileExists(atPath: emptyDeleteDir.path), "linked target protected") }
+}
+
 if failures == 0 {
     print("ProfileStore sandbox test: all checks passed")
     exit(0)

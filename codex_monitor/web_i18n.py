@@ -1,6 +1,9 @@
 """UI strings for the web dashboard (English + Chinese; picked from the browser language)."""
 
 EN = {
+    "deleteAccount": "Delete account…",
+    "deleteAccountConfirm": "Remove stored account '{n}'?\n\nSelected credentials: {path}\n\nThe account directory will move to the local _deleted backup. Other aliases and the current login are kept. To restore it, move the backed-up directory to its original location.",
+    "accountDeleted": "Account removed from the list; local backup kept in _deleted",
     "trySearch": "Try another search or account filter.",
     "tagsSaved": "Tags saved",
     "tagLimits": "Up to 8 tags, 30 characters each.",
@@ -131,6 +134,9 @@ EN = {
 }
 
 ZH = {
+    "deleteAccount": "删除账号…",
+    "deleteAccountConfirm": "删除账号存档“{n}”？\n\n选中的凭证：{path}\n\n整个账号目录会移入本地 _deleted 备份并从列表移除，保留其他同邮箱存档和当前登录。误删可将备份目录移回原位置。",
+    "accountDeleted": "已从列表移除，账号目录已备份到 _deleted",
     "trySearch": "试试其他关键词或账号筛选。",
     "tagsSaved": "标签已保存",
     "tagLimits": "最多 8 个标签，每个最多 30 个字。",

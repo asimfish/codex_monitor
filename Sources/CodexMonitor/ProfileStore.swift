@@ -14,6 +14,7 @@ struct Profile: Identifiable, Hashable {
     var loadError: String?
     var modified: Date?
     var fileSize: Int = 0
+    var directoryIdentity: UInt64?
 
     var accountId: String? { auth?.tokens?.accountId ?? identity?.accountId }
     var email: String? { identity?.email }
@@ -28,7 +29,7 @@ struct Profile: Identifiable, Hashable {
     }
 
     /// Signature used to detect on-disk changes without re-parsing.
-    var signature: String { "\(authURL.path)|\(modified?.timeIntervalSince1970 ?? 0)|\(fileSize)" }
+    var signature: String { "\(authURL.path)|\(modified?.timeIntervalSince1970 ?? 0)|\(fileSize)|\(directoryIdentity ?? 0)" }
 
     static func == (lhs: Profile, rhs: Profile) -> Bool { lhs.id == rhs.id && lhs.signature == rhs.signature }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -158,6 +159,9 @@ final class ProfileStore {
     private func load(id: String, name: String, directory: URL, isMain: Bool) -> Profile {
         let authURL = directory.appendingPathComponent("auth.json")
         var p = Profile(id: id, name: name, directory: directory, authURL: authURL, isMain: isMain)
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: directory.path) {
+            p.directoryIdentity = (attrs[.systemFileNumber] as? NSNumber)?.uint64Value
+        }
         if let attrs = try? FileManager.default.attributesOfItem(atPath: authURL.path) {
             p.modified = attrs[.modificationDate] as? Date
             p.fileSize = (attrs[.size] as? NSNumber)?.intValue ?? 0
@@ -187,7 +191,7 @@ final class ProfileStore {
         do {
             let data = try Data(contentsOf: main.authURL)
             if let existing = try? Data(contentsOf: target.authURL), existing == data { return nil }
-            try writeAtomically(data, to: target.authURL)
+            try writeAtomically(data, to: target.authURL, createParent: false)
             return L.adopted(target.name)
         } catch {
             return L.adoptFailed(target.name, error.localizedDescription)
@@ -200,6 +204,39 @@ final class ProfileStore {
            let other = rhs.identity?.userId, !other.isEmpty { return user == other }
         guard let email = lhs.email, !email.isEmpty, let other = rhs.email else { return false }
         return email.lowercased() == other.lowercased()
+    }
+
+    func removeProfile(_ profile: Profile) throws -> URL {
+        let fm = FileManager.default
+        let name = profile.name
+        let source = accountsRoot.appendingPathComponent(name).standardizedFileURL
+        guard !profile.isMain, !name.isEmpty, !name.hasPrefix("."), !name.hasPrefix("_"),
+              !name.contains("/"), !name.contains("\\"), !name.contains("\0"),
+              source.deletingLastPathComponent().path == accountsRoot.standardizedFileURL.path,
+              source.path == profile.directory.standardizedFileURL.path,
+              source.resolvingSymlinksInPath().path != codexHome.resolvingSymlinksInPath().path,
+              source.resolvingSymlinksInPath().deletingLastPathComponent().path == accountsRoot.resolvingSymlinksInPath().path,
+              (try source.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])).isDirectory == true,
+              (try source.resourceValues(forKeys: [.isSymbolicLinkKey])).isSymbolicLink != true else {
+            throw StoreError.io(L.deleteProtected)
+        }
+        let current = load(id: profile.id, name: name, directory: source, isMain: false)
+        guard profile.directoryIdentity != nil, current.directoryIdentity == profile.directoryIdentity,
+              current.modified == profile.modified, current.fileSize == profile.fileSize,
+              current.accountId == profile.accountId else {
+            throw StoreError.io(L.deleteAccountChanged)
+        }
+        let deleted = accountsRoot.appendingPathComponent("_deleted")
+        guard (try? deleted.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
+              deleted.resolvingSymlinksInPath().path == accountsRoot.resolvingSymlinksInPath().appendingPathComponent("_deleted").path else {
+            throw StoreError.io(L.deleteProtected)
+        }
+        try fm.createDirectory(at: deleted, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        let backup = deleted.appendingPathComponent(UUID().uuidString)
+        try fm.createDirectory(at: backup, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+        let destination = backup.appendingPathComponent(name)
+        try fm.moveItem(at: source, to: destination)
+        return destination
     }
 
     // Remove live credentials while keeping profile placeholders for re-login.
@@ -327,14 +364,14 @@ final class ProfileStore {
         root["tokens"] = tokens
         root["last_refresh"] = ISO8601.format(Date())
         let out = try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted, .sortedKeys])
-        try writeAtomically(out, to: url)
+        try writeAtomically(out, to: url, createParent: false)
     }
 
     // MARK: Files
 
-    func writeAtomically(_ data: Data, to url: URL) throws {
+    func writeAtomically(_ data: Data, to url: URL, createParent: Bool = true) throws {
         let fm = FileManager.default
-        try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        if createParent { try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true) }
         let tmp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).tmp-\(UUID().uuidString)")
         try data.write(to: tmp, options: [.atomic])
         try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tmp.path)

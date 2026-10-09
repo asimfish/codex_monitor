@@ -55,6 +55,7 @@ try {
   socket = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((done, reject) => { socket.addEventListener('open', done, {once: true}); socket.addEventListener('error', reject, {once: true}); });
   let sequence = 0;
+  const dialogs = [];
   const pending = new Map();
   socket.addEventListener('message', event => {
     const data = JSON.parse(event.data);
@@ -64,6 +65,7 @@ try {
     }
     if (data.method === 'Runtime.exceptionThrown') errors.push(data.params.exceptionDetails.text);
     if (data.method === 'Log.entryAdded' && data.params.entry.level === 'error') errors.push(data.params.entry.text);
+    if (data.method === 'Page.javascriptDialogOpening') dialogs.push(data.params);
   });
   const call = (method, params = {}) => new Promise((done, reject) => {
     const id = ++sequence;
@@ -149,8 +151,24 @@ try {
   assert.equal(await evaluate("document.documentElement.lang"), 'en');
   assert.ok((await evaluate(alice + '.innerText')).includes('Credentials until'));
   await screenshot('dashboard-en.png');
+  // A real confirmation dialog must support cancellation and removal of an empty account.
+  const beforeDelete = await evaluate("document.querySelectorAll('.card[data-account]').length");
+  const deleteGuest = "setTimeout(()=>{const c=document.querySelector('[data-account=guest]');c.querySelector('[data-act=menu]').click();c.querySelector('[data-act=remove]').click()},0)";
+  await evaluate(deleteGuest);
+  await until(() => dialogs.length === 1, 'delete confirmation');
+  assert.ok(dialogs[0].message.includes('guest') && dialogs[0].message.includes('_deleted'));
+  await call('Page.handleJavaScriptDialog', {accept: false});
+  assert.equal(await evaluate("document.querySelectorAll('.card[data-account]').length"), beforeDelete);
+  await evaluate(deleteGuest);
+  await until(() => dialogs.length === 2, 'second delete confirmation');
+  await call('Page.handleJavaScriptDialog', {accept: true});
+  await until(() => evaluate("!document.querySelector('[data-account=guest]')"), 'selected account removal');
+  assert.equal(await evaluate("document.querySelectorAll('.card[data-account]').length"), beforeDelete - 1);
+  assert.ok(await evaluate("!!document.querySelector('[data-account=bob]')"), 'Other accounts preserved');
+  await call('Page.reload');
+  await until(() => evaluate("document.querySelectorAll('.card[data-account]').length===8"), 'removal persisted after reload');
   assert.deepEqual(errors, [], 'Browser errors');
-  console.log('Browser checks passed: responsive layout, sorting, full details, light/dark, EN/ZH, persistent tags, filtering, escaping and interactions.');
+  console.log('Browser checks passed: responsive layout, sorting, full details, light/dark, EN/ZH, persistent tags, confirmed/cancelled account removal, filtering, escaping and interactions.');
   if (process.env.SCREENSHOT_DIR) console.log('Screenshots: ' + output);
 } finally {
   socket?.close();

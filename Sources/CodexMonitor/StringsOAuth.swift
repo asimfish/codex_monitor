@@ -28,7 +28,21 @@ extension L {
     static func accountPosition(_ n: Int) -> String { "第 \(n) 位" }
 
     // Per-account actions
-    static let accountActionsHelp = "账号操作：编辑标签、复制、导出、重新登录或退出登录"
+    static let accountActionsHelp = "账号操作：编辑标签、复制、导出、重新登录、退出登录或删除账号"
+    static let manageAccounts = "管理账号"
+    static let manageAccountsHint = "显示每个实际保存的账号目录，包括悬窗合并显示的同账号存档。删除只移走选中的目录，保留其他账号和当前登录。"
+    static let deleteAccount = "删除账号…"
+    static let deleteAccountAction = "删除账号"
+    static func deleteAccountTitle(_ name: String) -> String { "删除账号存档“\(name)”？" }
+    static func deleteAccountMessage(_ path: String) -> String {
+        "选中的目录：\n\(path)\n\n目录会移入账号目录下的 _deleted 备份，并从列表移除。不会退出当前登录，也不会删除其他同邮箱存档。误删可将备份目录移回原位置。"
+    }
+    static let deleteProtected = "只允许删除账号目录下的普通存档，当前主登录和符号链接受保护。"
+    static let deleteAccountChanged = "账号内容已变化，请刷新列表后重新选择删除。"
+    static let deleteLoginRunning = "正在登录账号，请完成或取消登录后再删除。"
+    static func accountDeleted(_ name: String) -> String { "账号存档“\(name)”已移入 _deleted 备份" }
+    static func duplicateAccount(_ name: String) -> String { "与“\(name)”为同一账号" }
+    static let noStoredAccounts = "还没有保存的账号存档。"
     static let copyAuthJSON = "复制 auth.json 内容"
     static let copyAuthPath = "复制 auth.json 路径"
     static let revealInFinder = "在 Finder 中显示"

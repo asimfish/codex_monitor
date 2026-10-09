@@ -526,6 +526,28 @@ final class QuotaMonitor: ObservableObject {
 
     // MARK: Actions
 
+    var storedProfilesForManagement: [Profile] {
+        DemoData.enabled ? entries.map(\.profile).filter { !$0.isMain } : store.loadProfiles()
+    }
+
+    func removeProfile(_ profile: Profile) {
+        guard !LoginWindowController.shared.hasRunningLogin else {
+            PanelController.shared.info(title: L.deleteAccountAction, message: L.deleteLoginRunning)
+            return
+        }
+        if DemoData.enabled {
+            entries.removeAll { $0.profile.id == profile.id }
+            return
+        }
+        do {
+            _ = try store.removeProfile(profile)
+            log(L.accountDeleted(profile.name))
+            reloadProfiles()
+        } catch {
+            PanelController.shared.info(title: L.deleteAccountAction, message: error.localizedDescription)
+        }
+    }
+
     func signOut(entryId: String) {
         guard let entry = entries.first(where: { $0.id == entryId }) else { return }
         guard !LoginWindowController.shared.hasRunningLogin else {

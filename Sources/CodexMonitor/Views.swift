@@ -170,6 +170,14 @@ struct VerticalQuotaBar: View {
 
 @MainActor
 enum AccountActions {
+    static func removeProfile(_ profile: Profile, monitor: QuotaMonitor) {
+        if PanelController.shared.confirm(title: L.deleteAccountTitle(profile.name),
+                                          message: L.deleteAccountMessage(profile.directory.path),
+                                          okTitle: L.deleteAccountAction, destructive: true) {
+            monitor.removeProfile(profile)
+        }
+    }
+
     static func copyContents(_ entry: QuotaMonitor.Entry, monitor: QuotaMonitor) {
         do {
             let data = try Data(contentsOf: entry.profile.authURL)
@@ -235,6 +243,11 @@ struct AccountActionsMenu: View {
                 ) {
                     monitor.signOut(entryId: entry.id)
                 }
+            }
+            Divider()
+            Button(L.manageAccounts) { AccountManagerController.shared.open(monitor: monitor) }
+            if !entry.profile.isMain {
+                Button(L.deleteAccount, role: .destructive) { AccountActions.removeProfile(entry.profile, monitor: monitor) }
             }
         } label: {
             Image(systemName: "doc.on.doc")
@@ -542,6 +555,7 @@ struct WidgetView: View {
         Toggle(L.autoRefreshToggle, isOn: $monitor.autoRefreshOn401)
         Divider()
         Button(L.addAccountEllipsis) { addAccount() }
+        Button(L.manageAccounts) { AccountManagerController.shared.open(monitor: monitor) }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Button(L.openUsagePage) {
             if let u = URL(string: "https://chatgpt.com/codex/settings/usage") { NSWorkspace.shared.open(u) }
@@ -573,6 +587,8 @@ struct WidgetView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
+            Button(L.manageAccounts) { AccountManagerController.shared.open(monitor: monitor) }
+                .buttonStyle(.link).font(.caption)
             Button {
                 addAccount()
             } label: {

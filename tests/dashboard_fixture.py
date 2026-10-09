@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 import sys
 import tempfile
@@ -10,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from codex_monitor import demo
+from codex_monitor import demo, paths, store
 from codex_monitor.monitor import Monitor
 from codex_monitor.usage import LiveEvent
 from codex_monitor.web import dashboard_url, make_server
@@ -62,7 +63,18 @@ if __name__ == "__main__":
         os.environ["CODEX_HOME"] = str(Path(directory) / "codex")
         os.environ["CODEX_ACCOUNTS_DIR"] = str(Path(directory) / "accounts")
         os.environ.pop("CODEX_MONITOR_DEMO", None)
-        server = make_server(fixture_monitor(), port=0)
+        monitor = fixture_monitor()
+        now = datetime.now(timezone.utc)
+        for state in monitor.states.values():
+            directory = paths.accounts_dir() / state.name
+            directory.mkdir(parents=True, exist_ok=True)
+            state.auth_path = str(directory / "auth.json")
+            if state.ident.get("has_tokens"):
+                auth = demo._auth(state.display_name, state.ident["plan"], state.ident["account_id"],
+                                  state.ident.get("subscription_until"), state.ident["access_expires"], now)
+                store.atomic_write(directory / "auth.json", json.dumps(auth).encode())
+                if state.active: store.atomic_write(paths.main_auth_path(), json.dumps(auth).encode())
+        server = make_server(monitor, port=0)
         print(dashboard_url(server) + "&lang=zh", flush=True)
         try:
             server.serve_forever()

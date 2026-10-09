@@ -262,14 +262,15 @@ def cmd_export(a: argparse.Namespace) -> None:
 
 
 def cmd_remove(a: argparse.Namespace) -> None:
-    p = store.get_profile(a.name)
+    directory = store.directory_for_removal(a.name)
+    revision = store.removal_revision(a.name)
     if not a.yes:
-        ans = input(f"delete {p.directory}? This only removes local files (no remote logout). [y/N] ").strip().lower()
+        ans = input(f"remove {directory} from the list? It will move to _deleted; current login and other aliases remain. [y/N] ").strip().lower()
         if ans not in ("y", "yes"):
             print("cancelled")
             return
-    store.remove(a.name)
-    print(f"OK  removed '{a.name}'")
+    destination = store.remove(a.name, expected_revision=revision)
+    print(f"OK  removed '{a.name}'; backup: {destination}")
 
 
 def cmd_sync(a: argparse.Namespace) -> None:
@@ -416,7 +417,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-y", "--yes", action="store_true")
     s.set_defaults(fn=cmd_refresh)
 
-    s = sp.add_parser("remove", help="delete an account directory (no remote logout)")
+    s = sp.add_parser("remove", help="remove one account from the list, keeping a local backup (no logout)")
     s.add_argument("name")
     s.add_argument("-y", "--yes", action="store_true")
     s.set_defaults(fn=cmd_remove)
