@@ -15,7 +15,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: python tests/test_python.py
+      - run: python tests/test_reset_credits.py
       - run: python tests/test_cli.py
+      - run: python tests/test_web_regressions.py
+      - run: python tests/test_recovery.py
       - run: python tests/test_dashboard.py
       - run: python tests/test_removal.py
       - run: python tests/test_rename.py
