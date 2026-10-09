@@ -5,24 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23202c3a'/%3E%3Cpath d='m9 9 6 6-6 6m8 2h7' fill='none' stroke='white' stroke-width='2'/%3E%3C/svg%3E">
 <title>Codex Monitor</title>
-<style>__STYLE__</style>
+<style>
+__STYLE__
+</style>
 </head>
 <body>
 <div class="topbar"><div class="topbar-inner">
   <div class="brand"><span class="brandmark" aria-hidden="true">&gt;_</span>Codex Monitor</div>
-  <div class="header-actions"><button id="btnRefresh">↻ <span id="refreshLabel"></span></button><select id="lang"><option value="en">EN</option><option value="zh">中文</option></select><button class="primary" id="btnAdd"></button></div>
+  <div class="header-actions"><button id="btnRefresh">↻ <span id="refreshLabel"></span></button><select id="theme" aria-label="Theme"></select><select id="lang"><option value="en">EN</option><option value="zh">中文</option></select><button class="primary" id="btnAdd"></button><button id="btnSettings" class="icon-btn" aria-label="Settings">⚙</button></div>
 </div></div>
 <main class="wrap">
-  <div class="page-heading"><div><h1 id="title"></h1><p id="subtitle"></p></div><span class="sync-state"><span class="dot" id="syncDot"></span><span id="last" aria-live="polite"></span></span></div>
+  <div class="page-heading"><div><div class="eyebrow" id="eyebrow"></div><h1 id="title"></h1><p id="subtitle"></p></div><span class="sync-state"><span class="dot" id="syncDot"></span><span id="last" aria-live="polite"></span></span></div>
+  <div class="connection-banner" id="connectionBanner" role="alert" hidden><span id="connectionMessage"></span><button id="retryConnection"></button></div>
   <div class="overview" id="overview"></div>
   <div class="err annotation-error" id="annotationError" role="alert"></div>
-  <div class="toolbar"><nav class="filters" id="filters" aria-label="Account filters"></nav><div class="search-wrap"><input type="search" id="search" autocomplete="off"></div></div>
-  <div class="list-caption"><span id="sortHint"></span><div class="view-actions"><span id="shownCount"></span><button class="link small" id="btnToggleAll" data-act="toggleall"></button></div></div>
-  <div id="accounts" class="account-grid"></div>
+  <div class="toolbar"><nav class="filters" id="filters" aria-label="Account filters"></nav><div class="search-wrap"><input type="search" id="search" autocomplete="off"><button class="link" id="clearSearch" hidden>×</button></div></div>
+  <div class="list-caption"><span id="sortHint"></span><div class="view-actions"><span id="shownCount"></span><select id="sort" aria-label="Sort accounts"></select><button class="link small" id="btnToggleAll" data-act="toggleall"></button></div></div>
+  <div id="accounts" class="account-grid" aria-busy="true"><div class="card loading"><span class="spin"></span><span id="loadingText">Loading accounts…</span></div></div>
   <footer><span class="foot-path" id="foot"></span><button class="link small" id="btnLog"></button></footer>
   <pre class="log" id="log" style="display:none"></pre>
 </main>
-<div class="toast" id="toast" role="status"></div>
+<div class="toast" id="toast" role="status"><span id="toastMsg"></span><button class="link mini" id="toastAct"></button></div>
 <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle"><div class="box">
   <h2 id="mTitle"></h2><div id="mBody"></div>
   <div class="modal-actions"><button id="mCancel"></button><button class="primary" id="mOk"></button></div>
@@ -35,6 +38,8 @@
   <p id="tagError" class="tag-error" role="alert"></p>
   <div class="modal-actions"><button type="button" id="tagCancel"></button><button class="primary" type="submit" id="tagSave"></button></div>
 </form></dialog>
-<script>__SCRIPT__</script>
+<script>
+__SCRIPT__
+</script>
 </body>
 </html>

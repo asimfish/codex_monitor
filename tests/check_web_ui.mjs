@@ -77,6 +77,29 @@ try {
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
     return result.result.value;
   };
+  const assertCardAlignment = async label => {
+    const rows = await evaluate(`(() => {
+      const rows = new Map();
+      for (const card of document.querySelectorAll('.card[data-account]')) {
+        const box = card.getBoundingClientRect();
+        const key = Math.round(box.top);
+        if (!rows.has(key)) rows.set(key, []);
+        const sections = ['.status-line', ':is(.windows,.quota-placeholder)', '.credit-balance', '.reset-credit-line', '.reset-credit-line > button', '.reset-expiry', '.metrics', '.metric:nth-child(3)', '.tags-row', '.card-footer', '.card-footer > button:nth-child(2)'];
+        const positions = Object.fromEntries(sections.map(selector => [selector, card.querySelector(selector).getBoundingClientRect().top]));
+        const action = card.querySelector('.card-footer > :last-child').getBoundingClientRect();
+        positions.actionWidth = action.width;
+        positions.actionRightInset = box.right - action.right;
+        rows.get(key).push(positions);
+      }
+      return [...rows.values()].filter(row => row.length > 1);
+    })()`);
+    for (const row of rows) {
+      for (const selector of Object.keys(row[0])) {
+        const tops = row.map(card => card[selector]);
+        assert.ok(Math.max(...tops) - Math.min(...tops) <= 1, `Cards misaligned at ${label}: ${selector} ${JSON.stringify(tops)}`);
+      }
+    }
+  };
   const screenshot = async (filename, clip) => {
     const {data} = await call('Page.captureScreenshot', {format: 'png', captureBeyondViewport: false, ...(clip ? {clip} : {})});
     await writeFile(join(output, filename), Buffer.from(data, 'base64'));
@@ -88,23 +111,31 @@ try {
   assert.deepEqual(await evaluate("[...document.querySelectorAll('.card')].slice(0,3).map(el=>el.dataset.account)"), ['erin', 'alice', 'bob']);
   const alice = "document.querySelector('[data-account=alice]')";
   const text = await evaluate(alice + '.innerText');
-  for (const label of ['重置次数', '订阅到期', '凭证有效期', '余额', '12.50', 'Code review', 'GPT-5.3-Codex-Spark']) assert.ok(text.includes(label), 'Missing detail: ' + label);
+  for (const label of ['重置次数', '订阅到期', '凭证有效期', '余额', '12.50']) assert.ok(text.includes(label), 'Missing detail: ' + label);
+  assert.equal(await evaluate("document.querySelectorAll('.extras,.extra-quota').length"), 0, 'Special quota section removed');
   assert.match(await evaluate(alice + ".querySelector('.reset-at').innerText"), /\d{4}\/\d{2}\/\d{2}/);
+  await assertCardAlignment('initial desktop');
   await screenshot('dashboard-zh.png');
   for (const scrollbar of ['default', 'classic']) {
     if (scrollbar === 'classic') {
       await evaluate("const style=document.createElement('style');style.id='classic-scrollbar-test';style.textContent='html::-webkit-scrollbar{width:15px}';document.head.appendChild(style)");
     }
-    for (const [width, columns] of [[1440, 3], [1000, 2], [390, 1], [320, 1]]) {
+    for (const [width, columns] of [[1440, 3], [1000, 2], [850, 2], [700, 2], [390, 1], [320, 1]]) {
       await call('Emulation.setDeviceMetricsOverride', {width, height: 1100, deviceScaleFactor: 1, mobile: false});
       // clientWidth excludes a classic scrollbar; innerWidth includes its gutter.
       const layout = await evaluate("({width:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,columns:getComputedStyle(document.getElementById('accounts')).gridTemplateColumns.split(' ').length})");
       assert.equal(layout.scroll, layout.width, 'Horizontal overflow at ' + width + ' (' + scrollbar + ')');
       assert.equal(layout.columns, columns, 'Columns at ' + width);
+      await assertCardAlignment(width + ' (' + scrollbar + ')');
       if (width === 390 && scrollbar === 'default') await screenshot('dashboard-mobile-zh.png');
     }
   }
   await evaluate("document.getElementById('classic-scrollbar-test').remove()");
+  // An active, usable account keeps the same action slots as its neighbors.
+  await evaluate("STATE.accounts[0].active=true;render(STATE)");
+  await call('Emulation.setDeviceMetricsOverride', {width: 700, height: 1100, deviceScaleFactor: 1, mobile: false});
+  await assertCardAlignment('active account with wrapped title');
+  await evaluate('tick()');
   await call('Emulation.setDeviceMetricsOverride', {width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false});
   await call('Emulation.setEmulatedMedia', {features: [{name: 'prefers-color-scheme', value: 'dark'}]});
   await delay(200);
@@ -120,8 +151,8 @@ try {
   await evaluate(alice + ".querySelector('[data-act=menu]').click()");
   await evaluate('tick()');
   assert.equal(await evaluate(alice + ".querySelector('.menu').classList.contains('open')"), true);
-  await evaluate("document.querySelector('[data-account=dave] details').open=true; tick()");
-  assert.equal(await evaluate("document.querySelector('[data-account=dave] details').open"), true);
+  await evaluate("document.querySelector('[data-account=dave] details[data-detail=error]').open=true; tick()");
+  assert.equal(await evaluate("document.querySelector('[data-account=dave] details[data-detail=error]').open"), true);
   await evaluate("document.getElementById('title').click()");
 
   // Save a literal HTML-looking tag through the actual dialog, then reload.
