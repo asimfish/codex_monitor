@@ -20,11 +20,17 @@ const until = async (test, label, attempts = 100) => {
   for (let i = 0; i < attempts; i++) { const value = await test(); if (value) return value; await delay(100); }
   throw new Error('Timed out: ' + label);
 };
-const stop = async child => {
-  if (!child || child.exitCode !== null) return;
-  child.kill('SIGTERM');
-  await Promise.race([new Promise(done => child.once('exit', done)), delay(3000)]);
-  if (child.exitCode === null) child.kill('SIGKILL');
+const stop = async (child, group = false) => {
+  if (!child) return;
+  const signal = name => {
+    if (group && process.platform !== 'win32') {
+      try { process.kill(-child.pid, name); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+    } else if (child.exitCode === null) child.kill(name);
+  };
+  signal('SIGTERM');
+  if (child.exitCode === null) await Promise.race([new Promise(done => child.once('exit', done)), delay(3000)]);
+  // A launcher can exit while browser descendants are still writing the profile.
+  signal('SIGKILL');
 };
 
 try {
@@ -38,7 +44,7 @@ try {
   }, 'fixture URL');
   chrome = spawn(chromePath, ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--no-sandbox', '--remote-debugging-port=0', '--remote-debugging-address=127.0.0.1',
-    '--user-data-dir=' + directory, 'about:blank'], {stdio: ['ignore', 'ignore', 'pipe']});
+    '--user-data-dir=' + directory, 'about:blank'], {detached: process.platform !== 'win32', stdio: ['ignore', 'ignore', 'pipe']});
   let chromeErrors = '';
   chrome.stderr.on('data', bytes => { chromeErrors += bytes; });
   const port = await until(async () => {
@@ -146,6 +152,6 @@ try {
   if (process.env.SCREENSHOT_DIR) console.log('Screenshots: ' + output);
 } finally {
   socket?.close();
-  await stop(chrome); await stop(fixture);
-  await rm(directory, {recursive: true, force: true});
+  await stop(chrome, true); await stop(fixture);
+  await rm(directory, {recursive: true, force: true, maxRetries: 10, retryDelay: 100});
 }
