@@ -167,8 +167,29 @@ try {
   assert.ok(await evaluate("!!document.querySelector('[data-account=bob]')"), 'Other accounts preserved');
   await call('Page.reload');
   await until(() => evaluate("document.querySelectorAll('.card[data-account]').length===8"), 'removal persisted after reload');
+  // Renaming uses the real prompt and keeps tags, expansion and the other accounts.
+  const beforeRenameTags = await evaluate(alice + ".querySelector('.tags-row').innerText");
+  assert.ok(await evaluate(alice + ".querySelector('[data-act=collapse]')!==null"));
+  const renameAlice = "setTimeout(()=>{const c=document.querySelector('[data-account=alice]');c.querySelector('[data-act=menu]').click();c.querySelector('[data-act=rename]').click()},0)";
+  await evaluate(renameAlice);
+  await until(() => dialogs.length === 3, 'rename prompt');
+  assert.equal(dialogs[2].type, 'prompt');
+  assert.equal(dialogs[2].defaultPrompt, 'alice');
+  await call('Page.handleJavaScriptDialog', {accept: false});
+  assert.ok(await evaluate("!!document.querySelector('[data-account=alice]')"));
+  await evaluate(renameAlice);
+  await until(() => dialogs.length === 4, 'second rename prompt');
+  await call('Page.handleJavaScriptDialog', {accept: true, promptText: '工作账号 A'});
+  const renamed = "document.querySelector('[data-account=\"工作账号 A\"]')";
+  await until(() => evaluate(renamed + "!==null && !document.querySelector('[data-account=alice]')"), 'renamed account');
+  assert.equal(await evaluate(renamed + ".querySelector('.tags-row').innerText"), beforeRenameTags);
+  assert.ok(await evaluate(renamed + ".querySelector('[data-act=collapse]')!==null"));
+  assert.equal(await evaluate("document.querySelectorAll('.card[data-account]').length"), 8);
+  await call('Page.reload');
+  await until(() => evaluate(renamed + "!==null && document.querySelectorAll('.card[data-account]').length===8"), 'rename persisted after reload');
+  assert.equal(await evaluate(renamed + ".querySelector('.tags-row').innerText"), beforeRenameTags);
   assert.deepEqual(errors, [], 'Browser errors');
-  console.log('Browser checks passed: responsive layout, sorting, full details, light/dark, EN/ZH, persistent tags, confirmed/cancelled account removal, filtering, escaping and interactions.');
+  console.log('Browser checks passed: responsive layout, sorting, full details, light/dark, EN/ZH, persistent tags, confirmed/cancelled removal, cancelled/persistent rename, filtering, escaping and interactions.');
   if (process.env.SCREENSHOT_DIR) console.log('Screenshots: ' + output);
 } finally {
   socket?.close();

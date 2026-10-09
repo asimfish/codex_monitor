@@ -64,6 +64,32 @@ final class AccountAnnotations {
     @discardableResult
     func save(key: String, tags: [String], unavailable: Bool) throws -> AccountAnnotation {
         let value = try Self.validated(tags: tags, unavailable: unavailable)
+        return try withWriterLock {
+            var records = try read()
+            records[key] = value
+            try write(records)
+            return value
+        }
+    }
+
+    func renaming(from oldName: String, to newName: String, move: () throws -> Void, rollback: () throws -> Void) throws {
+        try withWriterLock {
+            var records = try read()
+            let original = records
+            let value = records.removeValue(forKey: "profile:" + oldName)
+            records.removeValue(forKey: "profile:" + newName)
+            if let value = value { records["profile:" + newName] = value }
+            try move()
+            do {
+                if records != original { try write(records) }
+            } catch {
+                try rollback()
+                throw error
+            }
+        }
+    }
+
+    private func withWriterLock<T>(_ body: () throws -> T) throws -> T {
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
         // Python and Swift use the same advisory lock, so different-account edits cannot be lost.
@@ -72,8 +98,11 @@ final class AccountAnnotations {
         defer { close(fd) }
         guard flock(fd, LOCK_EX) == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
         defer { flock(fd, LOCK_UN) }
-        var records = try read()
-        records[key] = value
+        return try body()
+    }
+
+    private func write(_ records: [String: AccountAnnotation]) throws {
+        let fm = FileManager.default
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
         let payload = try encoder.encode(Document(version: 1, accounts: records))
@@ -83,6 +112,5 @@ final class AccountAnnotations {
             throw CocoaError(.fileWriteUnknown)
         }
         guard rename(temporary.path, url.path) == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
-        return value
     }
 }

@@ -73,8 +73,11 @@ private struct AccountManagerView: View {
                                     .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                             }
                             Spacer(minLength: 8)
-                            Button(L.deleteAccount, role: .destructive) { AccountActions.removeProfile(profile, monitor: monitor) }
-                                .controlSize(.small)
+                            VStack(alignment: .trailing, spacing: 8) {
+                                Button(L.renameAccount) { AccountActions.renameProfile(profile, monitor: monitor) }
+                                Button(L.deleteAccount, role: .destructive) { AccountActions.removeProfile(profile, monitor: monitor) }
+                            }
+                            .controlSize(.small)
                         }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)

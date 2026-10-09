@@ -142,8 +142,16 @@ def main() -> None:
             assert oct(exported.stat().st_mode & 0o777) == "0o600"
         sb.run("import", "b2", str(exported))
         assert account_of(sb.profile("b2")) == acct_b
-        sb.run("remove", "b2", "-y")
+        original = sb.profile("b2").read_bytes()
+        sb.run("rename", "b2", "备用 B")
+        assert sb.profile("备用 B").read_bytes() == original
+        if os.name != "nt":
+            assert sb.run("env", "备用 B").stdout.strip() == f"export CODEX_HOME='{sb.accounts / '备用 B'}'"
         assert not sb.profile("b2").exists()
+        assert sb.run("use", "b").returncode == 0
+        assert sb.run("rename", "备用 B", "b", check=False).returncode != 0
+        sb.run("remove", "备用 B", "-y")
+        assert not sb.profile("备用 B").exists()
 
         # 6. duplicate name is refused without --force; unknown profile fails cleanly
         cp = sb.run("save", "a-copy", check=False)

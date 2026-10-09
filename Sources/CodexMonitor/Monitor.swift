@@ -260,6 +260,17 @@ final class QuotaMonitor: ObservableObject {
             profiles = store.loadProfiles()
         }
 
+        // A rename made in the browser keeps the native manual position too.
+        let currentIds = Set(profiles.map(\.id))
+        for profile in profiles {
+            if let old = entries.first(where: {
+                !$0.profile.isMain && !currentIds.contains($0.id) && profile.directoryIdentity != nil
+                    && $0.profile.directoryIdentity == profile.directoryIdentity
+            }) {
+                accountOrder.rename(old.id, to: profile.id)
+            }
+        }
+
         profiles = ProfileStore.displayProfiles(profiles)
 
         var previous: [String: Entry] = [:]
@@ -528,6 +539,37 @@ final class QuotaMonitor: ObservableObject {
 
     var storedProfilesForManagement: [Profile] {
         DemoData.enabled ? entries.map(\.profile).filter { !$0.isMain } : store.loadProfiles()
+    }
+
+    func renameProfile(_ profile: Profile, to newName: String) {
+        guard !LoginWindowController.shared.hasRunningLogin else {
+            PanelController.shared.info(title: L.renameAccount, message: L.renameLoginRunning)
+            return
+        }
+        do {
+            let renamed: Profile
+            if DemoData.enabled {
+                let name = try ProfileStore.validatedRenameName(newName)
+                guard !entries.contains(where: { $0.profile.name == name && $0.id != profile.id }) else {
+                    throw StoreError.alreadyExists(name)
+                }
+                let directory = store.accountsRoot.appendingPathComponent(name)
+                renamed = Profile(id: name, name: name, directory: directory, authURL: directory.appendingPathComponent("auth.json"),
+                                  isMain: false, auth: profile.auth, identity: profile.identity)
+                if let index = entries.firstIndex(where: { $0.id == profile.id }) { entries[index].profile = renamed }
+                if let annotation = annotations.removeValue(forKey: "profile:" + profile.name) {
+                    annotations["profile:" + name] = annotation
+                }
+            } else {
+                renamed = try store.renameProfile(profile, to: newName)
+                reloadProfiles()
+                reloadAnnotations()
+            }
+            accountOrder.rename(profile.id, to: renamed.id)
+            log(L.accountRenamed(profile.name, renamed.name))
+        } catch {
+            PanelController.shared.info(title: L.renameAccount, message: error.localizedDescription)
+        }
     }
 
     func removeProfile(_ profile: Profile) {

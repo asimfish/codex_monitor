@@ -122,6 +122,7 @@ const windowRow = w => `<div class="win"><div class="quota-heading"><span class=
 <div class="reset-line"><span>${t('resetsIn')}</span><b>${countdown(w.reset_at)}</b></div><span class="reset-at">${fmtFull(w.reset_at)}</span></div>`;
 const tagChips = a => a.tags.map(tag => `<span class="tag">${esc(tag)}</span>`).join('');
 const actionsMenu = a => `<span class="menu" data-menu><button class="icon-btn link" data-act="menu" data-n="${esc(a.name)}" title="${t('actions')}" aria-label="${t('actions')}" aria-expanded="false">⋯</button><div class="dd">
+${!a.is_main?`<button data-act="rename" data-n="${esc(a.name)}" ${a.removal_revision?'':'disabled'}>${t('renameAccount')}</button>`:''}
 <button data-act="tags" data-n="${esc(a.name)}">${t('editTags')}</button>
 <button data-act="relogin" data-n="${esc(a.name)}">${t('relogin')}</button>
 <button data-act="copy" data-n="${esc(a.name)}" ${a.has_tokens?'':'disabled'}>${t('copyAuth')}</button>
@@ -212,6 +213,7 @@ document.addEventListener('click', async ev => {
     else if (act === 'download') { window.open('/api/auth/' + encodeURIComponent(n) + '?download=1&token=' + encodeURIComponent(TOKEN)); }
     else if (act === 'relogin') { if (confirm(t('reloginConfirm').replace('{n}', n))) openLogin(n, true); }
     else if (act === 'refreshtoken') { if (confirm(t('refreshTokenConfirm'))) { await api('/api/token/refresh', 'POST', {name: n}); tick(); } }
+    else if (act === 'rename') { const a=STATE.accounts.find(x=>x.name===n);if(a&&!a.is_main&&a.removal_revision){const newName=prompt(t('renameAccountPrompt').replace('{n}',n),n);if(newName!==null&&newName.trim()&&newName.trim()!==n){const result=await api('/api/rename','POST',{name:n,new_name:newName,revision:a.removal_revision});if(expanded.delete(n))expanded.add(result.name);saveExpansion();await tick();flash(t('accountRenamed'));}} }
     else if (act === 'remove') { const a=STATE.accounts.find(x=>x.name===n);if(a&&!a.is_main&&a.removal_revision&&confirm(t('deleteAccountConfirm').replace('{n}',n).replace('{path}',a.auth_path))){await api('/api/remove','POST',{name:n,revision:a.removal_revision});expanded.delete(n);saveExpansion();await tick();flash(t('accountDeleted'));} }
   } catch (e) { alert(e.message); }
 });
@@ -394,7 +396,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 body = text.encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Disposition", f'attachment; filename="auth-{name}.json"')
+                filename = urllib.parse.quote("auth-" + name + ".json", safe="")
+                self.send_header("Content-Disposition", "attachment; filename=\"auth.json\"; filename*=UTF-8''" + filename)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -422,6 +425,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json(200, {"ok": True, "annotations": m.set_annotations(body.get("name"), body.get("tags"), body.get("unavailable"))})
             elif path == "/api/remove":
                 self._json(200, {"ok": True, "backup": m.remove_account(body.get("name"), body.get("revision"))})
+            elif path == "/api/rename":
+                self._json(200, {"ok": True, "name": m.rename_account(body.get("name"), body.get("new_name"), body.get("revision"))})
             elif path == "/api/token/refresh":
                 self._json(200, {"ok": True, "result": m.refresh_token(str(body.get("name", "")))})
             elif path == "/api/login/start":

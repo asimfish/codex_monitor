@@ -38,6 +38,12 @@ struct AccountOrder {
         defaults.set(true, forKey: Self.automaticKey)
     }
 
+    mutating func rename(_ oldId: String, to newId: String) {
+        guard oldId != newId, ids.contains(oldId) else { return }
+        ids = ids.filter { $0 != newId }.map { $0 == oldId ? newId : $0 }
+        defaults.set(ids, forKey: Self.key)
+    }
+
     mutating func move(_ id: String, direction: Move, available: [String], pinned: Set<String>, priorities: [String: Int] = [:]) {
         let all = sorted(available, priorities: priorities)
         var movable = all.filter { !pinned.contains($0) }

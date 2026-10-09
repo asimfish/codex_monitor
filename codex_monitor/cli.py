@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import sys
 import time
@@ -247,7 +248,7 @@ def cmd_env(a: argparse.Namespace) -> None:
     if paths.IS_WINDOWS:
         print(f'$env:CODEX_HOME = "{p.directory}"   # PowerShell;  cmd: set CODEX_HOME={p.directory}')
     else:
-        print(f"export CODEX_HOME={p.directory}")
+        print(f"export CODEX_HOME={shlex.quote(str(p.directory))}")
 
 
 def cmd_path(a: argparse.Namespace) -> None:
@@ -259,6 +260,11 @@ def cmd_export(a: argparse.Namespace) -> None:
     p = store.get_profile(a.name)
     print(f"OK  exported '{a.name}' to {dst} ({p.ident['email'] or '?'}, token valid until {fmt_local(p.ident['access_expires'])})")
     print("    drop it in as ~/.codex/auth.json on the other machine. Whichever machine refreshes first may invalidate the other's refresh token.")
+
+
+def cmd_rename(a: argparse.Namespace) -> None:
+    renamed = store.rename(a.name, a.new_name, expected_revision=store.removal_revision(a.name))
+    print(f"OK  renamed '{a.name}' to '{renamed}'; login and tags preserved")
 
 
 def cmd_remove(a: argparse.Namespace) -> None:
@@ -416,6 +422,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name")
     s.add_argument("-y", "--yes", action="store_true")
     s.set_defaults(fn=cmd_refresh)
+
+    s = sp.add_parser("rename", help="rename an account archive, keeping login, tags and history")
+    s.add_argument("name")
+    s.add_argument("new_name")
+    s.set_defaults(fn=cmd_rename)
 
     s = sp.add_parser("remove", help="remove one account from the list, keeping a local backup (no logout)")
     s.add_argument("name")

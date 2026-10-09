@@ -81,6 +81,25 @@ class Annotations:
             atomic_write(self.path, json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8"))
         return value
 
+    @contextmanager
+    def renaming(self, old_name: str, new_name: str, rollback):
+        # Hold the shared native/web lock across the directory move and label migration.
+        with self.lock, self._writer_lock():
+            accounts = self.read()
+            original = dict(accounts)
+            value = accounts.pop("profile:" + old_name, None)
+            accounts.pop("profile:" + new_name, None)
+            if value is not None:
+                accounts["profile:" + new_name] = value
+            payload = json.dumps({"version": 1, "accounts": accounts}, ensure_ascii=False, indent=2).encode("utf-8")
+            yield
+            if accounts != original:
+                try:
+                    atomic_write(self.path, payload)
+                except Exception:
+                    rollback()
+                    raise
+
 
 def availability(account: dict, has_tokens: bool) -> str:
     if account["manual_unavailable"]:

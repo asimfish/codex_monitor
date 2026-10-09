@@ -45,4 +45,12 @@ precondition(AccountOrder.priority(remaining: 90, expired: true, hasError: false
 precondition(AccountOrder.priority(remaining: 90, expired: false, hasError: true, limited: false) == 3)
 precondition(AccountOrder.priority(remaining: 90, expired: false, hasError: false, limited: true) == 2)
 precondition(AccountOrder.priority(remaining: nil, expired: false, hasError: false, limited: false) == 1)
+order.move("bob", direction: .first, available: accounts, pinned: [])
+let beforeRename = order.sorted(accounts)
+order.rename("bob", to: "工作账号 B")
+let renamedAccounts = accounts.map { $0 == "bob" ? "工作账号 B" : $0 }
+expect(order.sorted(renamedAccounts), beforeRename.map { $0 == "bob" ? "工作账号 B" : $0 }, "rename preserves manual position")
+order.rename("bob", to: "工作账号 B")
+expect(AccountOrder(defaults: defaults).sorted(renamedAccounts), order.sorted(renamedAccounts), "rename persists and a repeated notification is harmless")
+precondition(!order.automatic, "rename preserves manual sorting mode")
 print("Account order tests: all checks passed")

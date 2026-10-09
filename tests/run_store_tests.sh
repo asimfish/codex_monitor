@@ -12,6 +12,8 @@ swiftc -swift-version 5 -module-name StoreTests -target "$(uname -m)-apple-macos
   "$ROOT/Sources/CodexMonitor/ProfileStore.swift" \
   "$ROOT/Sources/CodexMonitor/Strings.swift" \
   "$ROOT/Sources/CodexMonitor/StringsOAuth.swift" \
+  "$ROOT/Sources/CodexMonitor/StringsTags.swift" \
+  "$ROOT/Sources/CodexMonitor/AccountAnnotations.swift" \
   "$ROOT/Sources/CodexMonitor/OAuthCore.swift" \
   "$ROOT/Sources/CodexMonitor/LiveRateLimits.swift" \
   "$ROOT/tests/store/main.swift" \

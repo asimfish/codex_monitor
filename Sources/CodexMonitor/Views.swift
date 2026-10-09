@@ -170,6 +170,13 @@ struct VerticalQuotaBar: View {
 
 @MainActor
 enum AccountActions {
+    static func renameProfile(_ profile: Profile, monitor: QuotaMonitor) {
+        if let name = PanelController.shared.prompt(title: L.renameAccount,
+                                                    message: L.renameAccountMessage(profile.name), defaultValue: profile.name) {
+            monitor.renameProfile(profile, to: name)
+        }
+    }
+
     static func removeProfile(_ profile: Profile, monitor: QuotaMonitor) {
         if PanelController.shared.confirm(title: L.deleteAccountTitle(profile.name),
                                           message: L.deleteAccountMessage(profile.directory.path),
@@ -224,6 +231,9 @@ struct AccountActionsMenu: View {
     var body: some View {
         Menu {
             Button(L.editTags) { TagEditorController.shared.open(entry: entry, monitor: monitor) }
+            if !entry.profile.isMain {
+                Button(L.renameAccount) { AccountActions.renameProfile(entry.profile, monitor: monitor) }
+            }
             Divider()
             Button(L.copyAuthJSON) { AccountActions.copyContents(entry, monitor: monitor) }
             Button(L.copyAuthPath) { AccountActions.copyPath(entry, monitor: monitor) }

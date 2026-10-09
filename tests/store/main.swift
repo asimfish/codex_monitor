@@ -446,6 +446,52 @@ if let linked = store.loadProfiles().first(where: { $0.name == "delete-link" }) 
     catch { check(fm.fileExists(atPath: emptyDeleteDir.path), "linked target protected") }
 }
 
+// Rename one archive while preserving all credentials, history and annotation keys.
+let renameDir = store.accountsRoot.appendingPathComponent("rename-original")
+let renameAlias = store.accountsRoot.appendingPathComponent("rename-alias/auth.json")
+let renameAuth = makeAuth(email: "rename@example.com", account: "rename-account", lastRefresh: now)
+write(renameAuth, to: renameDir.appendingPathComponent("auth.json"))
+write(renameAuth, to: renameAlias)
+write(renameAuth, to: store.mainAuthURL)
+let renameBytes = try! Data(contentsOf: renameDir.appendingPathComponent("auth.json"))
+try! Data("session-fixture".utf8).write(to: renameDir.appendingPathComponent("history.txt"))
+try! fm.createSymbolicLink(at: renameDir.appendingPathComponent("shared.txt"), withDestinationURL: sharedSentinel)
+let renameAnnotations = AccountAnnotations(root: store.accountsRoot)
+try! renameAnnotations.save(key: "profile:rename-original", tags: ["保留标签"], unavailable: true)
+try! renameAnnotations.save(key: "profile:rename-alias", tags: ["其他存档"], unavailable: false)
+let selectedRename = store.loadProfiles().first { $0.name == "rename-original" }!
+let renamedProfile = try! store.renameProfile(selectedRename, to: "账号 A")
+check(renamedProfile.name == "账号 A" && renamedProfile.accountId == "rename-account", "renamed profile discovered with same login")
+check(!fm.fileExists(atPath: renameDir.path), "old name removed")
+check((try! Data(contentsOf: renamedProfile.authURL)) == renameBytes && (try! Data(contentsOf: renameAlias)) == renameBytes, "rename preserves credentials and other alias")
+check((try! Data(contentsOf: store.mainAuthURL)) == renameBytes, "rename keeps current main login unchanged")
+check((try! String(contentsOf: renamedProfile.directory.appendingPathComponent("history.txt"))) == "session-fixture", "rename preserves history")
+check((try! String(contentsOf: renamedProfile.directory.appendingPathComponent("shared.txt"))) == "keep-shared", "rename preserves shared link and target")
+let renamedNotes = try! renameAnnotations.read()
+check(renamedNotes["profile:rename-original"] == nil && renamedNotes["profile:账号 A"] == AccountAnnotation(tags: ["保留标签"], unavailable: true), "labels and unavailable flag migrate")
+check(renamedNotes["profile:rename-alias"]?.tags == ["其他存档"], "other labels preserved")
+for invalid in ["rename-alias", "../outside", ".hidden", "_deleted", "a/b", "a\\b", "main", "CON", "com1.txt", "trailing.", "", String(repeating: "x", count: 81)] {
+    do { _ = try store.renameProfile(renamedProfile, to: invalid); check(false, "invalid/existing rename rejected: \(invalid)") }
+    catch { check(fm.fileExists(atPath: renamedProfile.authURL.path), "invalid rename keeps source") }
+}
+let emptyRenameDir = store.accountsRoot.appendingPathComponent("rename-empty")
+try! fm.createDirectory(at: emptyRenameDir, withIntermediateDirectories: false)
+let emptyRename = store.loadProfiles().first { $0.name == "rename-empty" }!
+do { _ = try store.renameProfile(renamedProfile, to: "rename-empty"); check(false, "empty target collision rejected") }
+catch { check(fm.fileExists(atPath: emptyRenameDir.path), "failed-login target retained") }
+let renamedEmpty = try! store.renameProfile(emptyRename, to: "empty-renamed")
+check(fm.fileExists(atPath: renamedEmpty.directory.path) && renamedEmpty.auth == nil, "empty profile can be renamed")
+write(makeAuth(email: "replacement@example.com", account: "replacement-rename", lastRefresh: now), to: renamedProfile.authURL)
+do { _ = try store.renameProfile(renamedProfile, to: "stale-new"); check(false, "stale rename rejected") }
+catch { check(accountId(at: renamedProfile.authURL) == "replacement-rename", "replacement login preserved") }
+do { _ = try store.renameProfile(store.loadMain()!, to: "main-new"); check(false, "main rename rejected") }
+catch { check((try! Data(contentsOf: store.mainAuthURL)) == renameBytes, "main still unchanged") }
+let corruptNotes = Data("invalid annotations".utf8)
+try! corruptNotes.write(to: renameAnnotations.url)
+let currentRename = store.loadProfiles().first { $0.name == "账号 A" }!
+do { _ = try store.renameProfile(currentRename, to: "notes-error"); check(false, "corrupt annotations must stop rename") }
+catch { check(fm.fileExists(atPath: currentRename.directory.path) && (try! Data(contentsOf: renameAnnotations.url)) == corruptNotes, "corrupt notes and original directory preserved") }
+
 if failures == 0 {
     print("ProfileStore sandbox test: all checks passed")
     exit(0)

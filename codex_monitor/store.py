@@ -255,7 +255,7 @@ def directory_for_removal(name: str) -> Path:
     if (not stat.S_ISDIR(info.st_mode) or directory.is_symlink()
             or getattr(info, "st_file_attributes", 0) & 0x400
             or directory.resolve().parent != root or directory.resolve() == paths.codex_home().resolve()):
-        raise StoreError("Only ordinary account directories may be deleted; current login and links are protected")
+        raise StoreError("Only ordinary account archives may be changed; current login and links are protected")
     return directory
 
 
@@ -284,6 +284,36 @@ def remove(name: str, expected_revision: Optional[str] = None) -> Path:
     # Move only the selected alias; symlinked shared config/session targets stay untouched.
     directory.rename(destination)
     return destination
+
+
+def rename_name(name: object) -> str:
+    if not isinstance(name, str):
+        raise StoreError("Enter a new account name")
+    clean = name.strip()
+    reserved = {"main", "con", "prn", "aux", "nul"} | {prefix + str(i) for prefix in ("com", "lpt") for i in range(1, 10)}
+    if (not 1 <= len(clean) <= 80 or clean.startswith((".", "_")) or clean.endswith(".")
+            or clean.split(".", 1)[0].casefold() in reserved
+            or any(not (char.isalnum() or char in " ._-") for char in clean)):
+        raise StoreError("Use 1–80 letters, numbers, spaces, dots, underscores or hyphens; avoid leading dots/underscores and reserved names")
+    return clean
+
+
+def rename(name: str, new_name: object, expected_revision: Optional[str] = None) -> str:
+    from .annotations import Annotations
+
+    destination_name = rename_name(new_name)
+    directory = directory_for_removal(name)
+    destination = directory.parent / destination_name
+    with Annotations(directory.parent).renaming(name, destination_name, rollback=lambda: destination.rename(directory)):
+        directory = directory_for_removal(name)
+        if expected_revision is not None and removal_revision(name) != expected_revision:
+            raise StoreError("Account changed; refresh the list before renaming")
+        if destination_name == name:
+            return name
+        if os.path.lexists(destination):
+            raise StoreError("Account name already exists: " + destination_name)
+        directory.rename(destination)
+    return destination_name
 
 
 def ensure_shared_links(directory: Path) -> List[str]:

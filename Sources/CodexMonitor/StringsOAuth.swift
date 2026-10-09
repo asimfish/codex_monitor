@@ -28,7 +28,14 @@ extension L {
     static func accountPosition(_ n: Int) -> String { "第 \(n) 位" }
 
     // Per-account actions
-    static let accountActionsHelp = "账号操作：编辑标签、复制、导出、重新登录、退出登录或删除账号"
+    static let accountActionsHelp = "账号操作：编辑标签、重命名、复制、导出、重新登录、退出登录或删除账号"
+    static let renameAccount = "重命名账号…"
+    static let renameNameRules = "名称支持 1–80 个字母、数字、空格、点、下划线或连字符；不能以点或下划线开头，不能以点结尾，也不能使用 main、CON 等系统保留名称。"
+    static func renameAccountMessage(_ name: String) -> String {
+        "为“\(name)”输入新的存档名称。邮箱不变，登录、标签、排序和历史记录会保留。\n\n\(renameNameRules)"
+    }
+    static let renameLoginRunning = "正在登录账号，请完成或取消登录后再重命名。"
+    static func accountRenamed(_ old: String, _ new: String) -> String { "账号存档“\(old)”已重命名为“\(new)”" }
     static let manageAccounts = "管理账号"
     static let manageAccountsHint = "显示每个实际保存的账号目录，包括悬窗合并显示的同账号存档。删除只移走选中的目录，保留其他账号和当前登录。"
     static let deleteAccount = "删除账号…"
@@ -37,8 +44,8 @@ extension L {
     static func deleteAccountMessage(_ path: String) -> String {
         "选中的目录：\n\(path)\n\n目录会移入账号目录下的 _deleted 备份，并从列表移除。不会退出当前登录，也不会删除其他同邮箱存档。误删可将备份目录移回原位置。"
     }
-    static let deleteProtected = "只允许删除账号目录下的普通存档，当前主登录和符号链接受保护。"
-    static let deleteAccountChanged = "账号内容已变化，请刷新列表后重新选择删除。"
+    static let deleteProtected = "只允许修改账号目录下的普通存档，当前主登录和符号链接受保护。"
+    static let deleteAccountChanged = "账号内容已变化，请刷新列表后重新选择。"
     static let deleteLoginRunning = "正在登录账号，请完成或取消登录后再删除。"
     static func accountDeleted(_ name: String) -> String { "账号存档“\(name)”已移入 _deleted 备份" }
     static func duplicateAccount(_ name: String) -> String { "与“\(name)”为同一账号" }

@@ -31,6 +31,25 @@ if arguments.count > 2 {
     values = try AccountAnnotations(root: root).read()
     check(values["profile:alice"]?.tags == ["修改后的标签"], "Add/edit/delete must persist")
     check(values["profile:bob"]?.tags == ["保留其他账号"], "Saving another account must preserve existing notes")
+    try store.renaming(from: "alice", to: "账号 A", move: {}, rollback: { fatalError("Successful save must not roll back") })
+    values = try store.read()
+    check(values["profile:alice"] == nil && values["profile:账号 A"]?.tags == ["修改后的标签"], "Rename migrates the old annotation key")
+    check(values["profile:bob"]?.tags == ["保留其他账号"], "Rename preserves other annotations")
+    let notesBeforeFailure = try Data(contentsOf: store.url)
+    var rolledBack = false
+    do {
+        try store.renaming(from: "账号 A", to: "failed", move: {
+            try FileManager.default.removeItem(at: store.url)
+            try FileManager.default.createDirectory(at: store.url, withIntermediateDirectories: false)
+        }, rollback: {
+            rolledBack = true
+            try FileManager.default.removeItem(at: store.url)
+            try notesBeforeFailure.write(to: store.url)
+        })
+        fatalError("Metadata save should fail when destination is a directory")
+    } catch {}
+    let notesAfterRollback = try Data(contentsOf: store.url)
+    check(rolledBack && notesAfterRollback == notesBeforeFailure, "Failed metadata write invokes rollback and preserves original labels")
     try store.save(key: "main:acct-original", tags: ["主账号"], unavailable: true)
     values = try store.read()
     check(AccountAnnotations.lookup(values, name: "archived", isMain: false, accountId: "acct-original").tags == ["主账号"], "Archive fallback")

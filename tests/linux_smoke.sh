@@ -15,6 +15,7 @@ python tests/test_python.py
 python tests/test_cli.py
 python tests/test_dashboard.py
 python tests/test_removal.py
+python tests/test_rename.py
 bash scripts/install-linux.sh
 test -L "$task_dir/bin/codex-monitor"
 "$task_dir/bin/codex-monitor" --version

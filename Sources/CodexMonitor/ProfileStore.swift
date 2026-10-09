@@ -206,8 +206,7 @@ final class ProfileStore {
         return email.lowercased() == other.lowercased()
     }
 
-    func removeProfile(_ profile: Profile) throws -> URL {
-        let fm = FileManager.default
+    private func directoryForChange(_ profile: Profile) throws -> URL {
         let name = profile.name
         let source = accountsRoot.appendingPathComponent(name).standardizedFileURL
         guard !profile.isMain, !name.isEmpty, !name.hasPrefix("."), !name.hasPrefix("_"),
@@ -226,6 +225,13 @@ final class ProfileStore {
               current.accountId == profile.accountId else {
             throw StoreError.io(L.deleteAccountChanged)
         }
+        return source
+    }
+
+    func removeProfile(_ profile: Profile) throws -> URL {
+        let fm = FileManager.default
+        let source = try directoryForChange(profile)
+        let name = profile.name
         let deleted = accountsRoot.appendingPathComponent("_deleted")
         guard (try? deleted.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true,
               deleted.resolvingSymlinksInPath().path == accountsRoot.resolvingSymlinksInPath().appendingPathComponent("_deleted").path else {
@@ -237,6 +243,37 @@ final class ProfileStore {
         let destination = backup.appendingPathComponent(name)
         try fm.moveItem(at: source, to: destination)
         return destination
+    }
+
+    static func validatedRenameName(_ name: String) throws -> String {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stem = clean.components(separatedBy: ".")[0].lowercased()
+        let reserved = Set(["main", "con", "prn", "aux", "nul"] + (1...9).flatMap { ["com\($0)", "lpt\($0)"] })
+        guard (1...80).contains(clean.unicodeScalars.count), !clean.hasPrefix("."), !clean.hasPrefix("_"),
+              !clean.hasSuffix("."), !reserved.contains(stem),
+              clean.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || " ._-".unicodeScalars.contains($0) }) else {
+            throw StoreError.io(L.renameNameRules)
+        }
+        return clean
+    }
+
+    func renameProfile(_ profile: Profile, to newName: String) throws -> Profile {
+        let name = try Self.validatedRenameName(newName)
+        let source = try directoryForChange(profile)
+        if name == profile.name { return profile }
+        let destination = source.deletingLastPathComponent().appendingPathComponent(name)
+        let fm = FileManager.default
+        try AccountAnnotations(root: accountsRoot).renaming(from: profile.name, to: name, move: {
+            _ = try self.directoryForChange(profile)
+            guard !fm.fileExists(atPath: destination.path),
+                  (try? destination.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else {
+                throw StoreError.alreadyExists(name)
+            }
+            try fm.moveItem(at: source, to: destination)
+        }, rollback: {
+            try fm.moveItem(at: destination, to: source)
+        })
+        return load(id: name, name: name, directory: destination, isMain: false)
     }
 
     // Remove live credentials while keeping profile placeholders for re-login.

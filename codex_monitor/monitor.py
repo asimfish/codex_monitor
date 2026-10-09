@@ -294,6 +294,26 @@ class Monitor:
 
     # ------------------------------------------------------------ actions
 
+    def rename_account(self, name: object, new_name: object, revision: object) -> str:
+        with self.lock:
+            if not isinstance(name, str) or name not in self.states or self.states[name].is_main:
+                raise StoreError("Choose a stored account; current main login cannot be renamed")
+            if not isinstance(revision, str) or not revision or len(revision) > 512:
+                raise StoreError("Refresh the list before renaming")
+            if self.login_name == name and getattr(self.login, "phase", "") in ("starting", "waiting", "exchanging"):
+                raise StoreError("Finish or cancel this account's login before renaming")
+            directory = store.directory_for_removal(name)
+            if Path(self.states[name].auth_path).parent.resolve() != directory:
+                raise StoreError("Account location changed; refresh the list")
+            current_identity = identity(store.read_json(directory / "auth.json"))
+            if any(current_identity.get(key, "") != self.states[name].ident.get(key, "")
+                   for key in ("account_id", "email", "auth_mode")):
+                raise StoreError("Account identity changed; refresh the list before renaming")
+            renamed = store.rename(name, new_name, expected_revision=revision)
+            self.note("renamed account '%s' to '%s'" % (name, renamed))
+            self.reload_profiles()
+            return renamed
+
     def remove_account(self, name: object, revision: object) -> str:
         with self.lock:
             if not isinstance(name, str) or name not in self.states or self.states[name].is_main:
