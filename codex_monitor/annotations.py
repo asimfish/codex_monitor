@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import unicodedata
+from contextlib import contextmanager
 from pathlib import Path
 
 from .store import StoreError, atomic_write
@@ -13,6 +15,31 @@ class Annotations:
     def __init__(self, root: Path):
         self.path = root / "_annotations.json"
         self.lock = threading.RLock()
+
+    @contextmanager
+    def _writer_lock(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with (self.path.parent / "_annotations.lock").open("a+b") as handle:
+            os.chmod(handle.name, 0o600)
+            if os.name == "nt":
+                import msvcrt
+                if handle.tell() == 0:
+                    handle.write(b"0")
+                    handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                try:
+                    yield
+                finally:
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                try:
+                    yield
+                finally:
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
     def read(self) -> dict:
         with self.lock:
@@ -47,7 +74,7 @@ class Annotations:
 
     def save(self, key: str, tags: object, unavailable: object) -> dict:
         value = self.validate(tags, unavailable)
-        with self.lock:
+        with self.lock, self._writer_lock():
             accounts = self.read()
             accounts[key] = value
             payload = {"version": 1, "accounts": accounts}

@@ -28,7 +28,7 @@ extension L {
     static func accountPosition(_ n: Int) -> String { "第 \(n) 位" }
 
     // Per-account actions
-    static let accountActionsHelp = "账号操作：复制、导出、重新登录或退出登录"
+    static let accountActionsHelp = "账号操作：编辑标签、复制、导出、重新登录或退出登录"
     static let copyAuthJSON = "复制 auth.json 内容"
     static let copyAuthPath = "复制 auth.json 路径"
     static let revealInFinder = "在 Finder 中显示"

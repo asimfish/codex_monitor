@@ -215,6 +215,8 @@ struct AccountActionsMenu: View {
 
     var body: some View {
         Menu {
+            Button(L.editTags) { TagEditorController.shared.open(entry: entry, monitor: monitor) }
+            Divider()
             Button(L.copyAuthJSON) { AccountActions.copyContents(entry, monitor: monitor) }
             Button(L.copyAuthPath) { AccountActions.copyPath(entry, monitor: monitor) }
             Button(L.revealInFinder) { AccountActions.revealInFinder(entry) }
@@ -254,34 +256,37 @@ struct CompactAccountRow: View {
     var onSwitch: () -> Void
 
     var body: some View {
-        HStack(spacing: 6) {
-            Circle().fill(entry.statusColor).frame(width: 8, height: 8)
-            Text(entry.profile.displayName)
-                .font(.caption.weight(.medium))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            PlanBadge(text: entry.planLabel, small: true)
-            Spacer(minLength: 4)
-            if let w = entry.tightestWindow {
-                Text(L.remaining(Fmt.percent(w.remainingPercent)))
-                    .font(.caption.weight(.semibold))
-                    .monospacedDigit()
-                    .foregroundStyle(quotaColor(remaining: w.remainingPercent))
-            } else if entry.error != nil {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-            } else if entry.isFetching || entry.snapshot == nil {
-                ProgressView().controlSize(.mini)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Circle().fill(monitor.annotation(for: entry).unavailable ? .red : entry.statusColor).frame(width: 8, height: 8)
+                Text(entry.profile.displayName)
+                    .font(.caption.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                PlanBadge(text: entry.planLabel, small: true)
+                Spacer(minLength: 4)
+                if let w = entry.tightestWindow {
+                    Text(L.remaining(Fmt.percent(w.remainingPercent)))
+                        .font(.caption.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(quotaColor(remaining: w.remainingPercent))
+                } else if entry.error != nil {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                } else if entry.isFetching || entry.snapshot == nil {
+                    ProgressView().controlSize(.mini)
+                }
+                AccountActionsMenu(entry: entry, monitor: monitor)
+                Button(L.switchBtn) { onSwitch() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .help(L.switchHelp)
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
-            AccountActionsMenu(entry: entry, monitor: monitor)
-            Button(L.switchBtn) { onSwitch() }
-                .buttonStyle(.bordered)
-                .controlSize(.mini)
-                .help(L.switchHelp)
-            Image(systemName: "chevron.right")
-                .font(.caption2.weight(.semibold))
-                .foregroundStyle(.secondary)
+            AccountTagRow(entry: entry, monitor: monitor)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -315,6 +320,9 @@ struct WidgetView: View {
         VStack(alignment: .leading, spacing: 8) {
             VStack(alignment: .leading, spacing: 8) {
                 header
+                if let error = monitor.annotationError {
+                    Text(error).font(.caption2).foregroundStyle(.red)
+                }
                 if monitor.entries.isEmpty {
                     emptyState
                 } else {
@@ -638,6 +646,7 @@ struct AccountCard: View {
                     .foregroundStyle(src.live ? Color.green.opacity(0.9) : Color.secondary)
             }
             infoGrid
+            AccountTagRow(entry: entry, monitor: monitor)
             if let err = entry.error {
                 errorRow(err)
             } else if entry.isStale, let at = entry.snapshot?.fetchedAt {
@@ -672,7 +681,7 @@ struct AccountCard: View {
 
     private var titleRow: some View {
         HStack(spacing: 6) {
-            Circle().fill(entry.statusColor).frame(width: 8, height: 8)
+            Circle().fill(monitor.annotation(for: entry).unavailable ? .red : entry.statusColor).frame(width: 8, height: 8)
             Text(entry.profile.displayName)
                 .font(.system(size: 13, weight: .semibold))
                 .lineLimit(1)

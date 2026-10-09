@@ -74,13 +74,45 @@ final class QuotaMonitor: ObservableObject {
     }
 
     @Published private(set) var entries: [Entry] = []
+    @Published private(set) var annotations: [String: AccountAnnotation] = [:]
+    @Published private(set) var annotationError: String?
+    private var annotationStore: AccountAnnotations { AccountAnnotations(root: store.accountsRoot) }
+
+    func annotationKey(for entry: Entry) -> String {
+        AccountAnnotations.key(name: entry.profile.name, isMain: entry.profile.isMain, accountId: entry.profile.accountId)
+    }
+
+    func annotation(for entry: Entry) -> AccountAnnotation {
+        AccountAnnotations.lookup(annotations, name: entry.profile.name, isMain: entry.profile.isMain, accountId: entry.profile.accountId)
+    }
+
+    func reloadAnnotations() {
+        do {
+            let records = try annotationStore.read()
+            if records != annotations { annotations = records }
+            if annotationError != nil { annotationError = nil }
+        } catch {
+            let message = error.localizedDescription
+            if annotationError != message { annotationError = message }
+        }
+    }
+
+    func saveAnnotations(entryId: String, expectedKey: String, tags: [String], unavailable: Bool) throws {
+        guard let entry = entries.first(where: { $0.id == entryId }), annotationKey(for: entry) == expectedKey else {
+            throw AnnotationError.accountChanged
+        }
+        try annotationStore.save(key: expectedKey, tags: tags, unavailable: unavailable)
+        reloadAnnotations()
+        note(L.tagsSaved)
+    }
+
     @Published private var accountOrder = AccountOrder()
 
     var usesAutomaticAccountOrder: Bool { accountOrder.automatic }
 
     private var accountPriorities: [String: Int] {
         Dictionary(uniqueKeysWithValues: entries.map { entry in
-            (entry.id, AccountOrder.priority(
+            (entry.id, annotation(for: entry).unavailable ? 4 : AccountOrder.priority(
                 remaining: entry.tightestWindow?.remainingPercent,
                 expired: entry.profile.identity?.accessTokenExpired == true,
                 hasError: entry.error != nil,
@@ -93,7 +125,8 @@ final class QuotaMonitor: ObservableObject {
 
     var orderedOtherEntries: [Entry] {
         let byId = Dictionary(uniqueKeysWithValues: entries.map { ($0.id, $0) })
-        return accountOrder.sorted(entries.map(\.id), priorities: accountPriorities).compactMap { byId[$0] }.filter { !$0.isActive }
+        let ordered = accountOrder.sorted(entries.map(\.id), priorities: accountPriorities).compactMap { byId[$0] }.filter { !$0.isActive }
+        return ordered.filter { !annotation(for: $0).unavailable } + ordered.filter { annotation(for: $0).unavailable }
     }
 
     func moveAccount(_ id: String, direction: AccountOrder.Move) {
@@ -162,6 +195,7 @@ final class QuotaMonitor: ObservableObject {
     func start() {
         guard !started else { return }
         started = true
+        reloadAnnotations()
         if DemoData.enabled {
             entries = DemoData.entries()
             lastRefresh = Date()
@@ -184,6 +218,7 @@ final class QuotaMonitor: ObservableObject {
         liveTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.pollLive()
+                self?.reloadAnnotations()
                 self?.pollAppServerEvents()
             }
         }

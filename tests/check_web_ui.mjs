@@ -124,6 +124,7 @@ try {
 
   // Save a literal HTML-looking tag through the actual dialog, then reload.
   await evaluate(alice + ".querySelector('[data-act=tags]').click()");
+  await evaluate("const editedTag=document.querySelector('#tagList input');editedTag.value='工作账号新标签';editedTag.dispatchEvent(new Event('input',{bubbles:true}))");
   await evaluate("document.getElementById('tagInput').value='未删除但用不了';document.getElementById('tagInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}));document.getElementById('tagUnavailable').checked=true");
   const dialogClip = await evaluate("(()=>{const r=document.getElementById('tagDialog').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,scale:1}})()");
   await screenshot('dashboard-tags-zh.png', dialogClip);
@@ -133,12 +134,13 @@ try {
   assert.equal(await evaluate(alice + ".classList.contains('state-manual')"), true);
   assert.equal(await evaluate(alice + ".querySelectorAll('.tag b').length"), 0, 'Tags must render as text');
   assert.ok((await evaluate(alice + ".querySelector('.tags-row').innerText")).includes('<b>literal</b>'));
+  assert.ok((await evaluate(alice + ".querySelector('.tags-row').innerText")).includes('工作账号新标签'));
   await call('Page.reload');
   await until(() => evaluate("document.querySelector('[data-account=alice]')?.classList.contains('state-manual')"), 'persistent tag on reload');
   await evaluate("document.querySelector('[data-filter=tagged]').click();document.getElementById('search').value='未删除但用不了';document.getElementById('search').dispatchEvent(new Event('input',{bubbles:true}))");
   assert.equal(await evaluate("document.querySelectorAll('.card[data-account]').length"), 1, 'Tag search');
   await evaluate(alice + ".querySelector('[data-act=tags]').click()");
-  await evaluate("[...document.querySelectorAll('#tagList .editable')].find(el=>el.querySelector('span').textContent==='未删除但用不了').querySelector('button').click();document.getElementById('tagUnavailable').checked=false;document.getElementById('tagSave').click()");
+  await evaluate("[...document.querySelectorAll('#tagList .editable')].find(el=>el.querySelector('input').value==='未删除但用不了').querySelector('button').click();document.getElementById('tagUnavailable').checked=false;document.getElementById('tagSave').click()");
   await until(() => evaluate("!document.getElementById('tagDialog').open"), 'tag removal');
   await evaluate("document.getElementById('search').value='';document.getElementById('search').dispatchEvent(new Event('input'));document.querySelector('[data-filter=all]').click();tick()");
   assert.equal(await evaluate(alice + ".classList.contains('state-ready')"), true);

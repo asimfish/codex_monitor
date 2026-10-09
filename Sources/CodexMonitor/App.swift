@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         QuotaMonitor.shared.start()
         PanelController.shared.setup(monitor: QuotaMonitor.shared)
+        TagEditorController.shared.previewIfRequested(monitor: QuotaMonitor.shared)
         LoginDebug.runIfRequested()
     }
 
