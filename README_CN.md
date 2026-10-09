@@ -137,18 +137,21 @@ git rev-parse HEAD
 
 #### 复现一个确定的源码版本
 
-下面锁定到通过 CI 的 `6726148` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
+下面锁定到包含原生标签增删改功能的 `fcf115f` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 6726148f2d288fc24467194aa323c4ae0fe35870
+git checkout --detach fcf115f47ab6bb3d4bbdee665d08a2eb5c98bd29
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
+bash tests/run_annotations_tests.sh
 bash scripts/build.sh
 ```
 
 如需把这个版本安装到本机，再运行 `bash scripts/install.sh`；它会替换已有原生应用。仅编译使用系统 Swift 工具链，无第三方 Swift 依赖。模拟账号模式用于检查界面，不代表真实登录和额度接口已验证。
+
+原生悬窗支持标签的添加、修改和删除。展开悬窗后，每张账号卡片底部都有“添加标签／编辑标签”，账号操作菜单中也有“编辑标签”。要更新已安装的悬窗，请按上方升级步骤重新编译并安装，仅更新源码或重启网页不会替换原生应用。
 
 滚动列表、自动/手动排序和重复账号合并显示属于原生悬窗功能。同工作区、同用户的重复存档合并显示，原文件保留。当前使用账号固定在顶部，其他账号默认优先显示有额度且凭证未过期的项。
 
@@ -169,13 +172,20 @@ codex-monitor autostart install   # 开机自启：LaunchAgent / systemd 用户�
 
 网页默认优先展示**有额度、凭证未过期、请求正常**的账号，再显示待确认、额度耗尽、登录失效的账号；正在使用但已失效的账号也会靠后。同一可用性分组内优先显示使用中的账号，再按最低剩余额度从高到低排列。宽屏按窗口宽度显示 2–4 列，小屏单列。卡片显示每个额度窗口的百分比、重置倒计时和具体时间，额外额度、重置次数及到期时间、余额（接口提供时）、订阅快照、凭证有效期和最后刷新时间；支持状态筛选、搜索与深色模式。
 
-**自定义红色标签（网页版）：**点卡片底部 **+ 添加标签** → 输入如“账号被删除”“未删除但用不了” → 回车或点 **添加标签** → **保存**。每个账号最多 8 个标签，每个最多 30 字；再次打开可点 `×` 删除，也能在搜索框中搜索标签。如果你已确认账号不能用，可同时勾选 **标记为不可用，排到最后**；取消勾选并保存可恢复自动排序。普通标签只作备注，不会自动改变账号状态。
+**自定义红色标签（原生悬窗和网页版）：**每张账号卡片底部都有 **添加标签／编辑标签**，点已有红色标签也能打开编辑窗口。输入新标签后点 **添加标签** 或回车；已有标签可直接修改文字。原生悬窗点垃圾桶删除，网页点 `×` 删除，最后点 **保存**。每个账号最多 8 个标签，每个最多 30 字；网页搜索也会匹配标签。如果确认账号不能用，可勾选 **标记为不可用**；网页会排到最后，原生悬窗会在“其他账号”里排到后面，当前使用账号仍固定在顶部。取消勾选并保存可恢复排序。普通标签只作备注，不会自动改变账号状态。
 
-标签保存在账号目录根部的 `~/.codex-accounts/_annotations.json`（设置 `CODEX_ACCOUNTS_DIR` 时随之改变），刷新、重启及同名账号重新登录后保留，编辑标签不会改动 `auth.json`。不要为标记失效账号直接删除账号目录；保持账号在列表中，再加标签或重新登录即可。
+两端使用相同的账号目录时，保存后会自动同步标签。标签保存在账号目录根部的 `~/.codex-accounts/_annotations.json`（设置 `CODEX_ACCOUNTS_DIR` 时随之改变），刷新、重启及同名账号重新登录后保留，编辑标签不会改动 `auth.json`。不要为标记失效账号直接删除账号目录；保持账号在列表中，再加标签或重新登录即可。
 
 <p align="center"><img src="docs/screenshots/dashboard-zh.png" alt="可用账号优先的多列网页看板；截图使用模拟账号" width="1000"></p>
 
 <details><summary>标签编辑示例（模拟账号）</summary>
+
+<p>原生悬窗标签与编辑窗口：</p>
+
+<img src="docs/screenshots/native-tags.png" alt="原生悬窗显示红色标签，使用模拟账号" width="372">
+<img src="docs/screenshots/native-tag-editor.png" alt="原生标签编辑窗口：直接修改、添加和删除" width="480">
+
+<p>网页版标签编辑：</p>
 
 <img src="docs/screenshots/dashboard-tags-zh.png" alt="编辑红色标签并手动标记不可用" width="480">
 
@@ -235,15 +245,15 @@ bash scripts/install-linux.sh
 
 ### 3.3 验证范围与下载
 
-[固定版本 6726148 的成功 CI](https://github.com/asimfish/codex_monitor/actions/runs/35210407282) 验证了：
+[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `fcf115f` 或更新代码、且显示成功的运行。检查范围如下：
 
 | 检查 | 已验证环境 | 不代表什么 |
 |---|---|---|
 | Python 测试、`pip install .`、CLI 帮助命令 | GitHub 的 Windows、Linux、macOS runner，Python 3.11 | 不代表真实账号登录、自启或全部桌面交互均在三平台验证 |
-| Swift 存储/排序测试、原生应用编译和打包 | `macos-14` runner，Apple Silicon | 不代表 Intel 实机或所有 macOS 版本上的显示效果已验证 |
+| Swift 存储/排序/跨端标签测试、原生应用编译和打包 | `macos-14` runner，Apple Silicon | 不代表 Intel 实机或所有 macOS 版本上的显示效果已验证 |
 | 原生应用安装、自启、真实账号使用 | 开发机 macOS 26.2，Apple Silicon | 不保证对方电脑与截图具有相同透明效果 |
 
-下载编译产物：打开上面的 CI 链接 → 页面底部 **Artifacts** → `CodexMonitor-macos`（下载通常需要登录 GitHub，产物会过期）。下载包中包含应用 ZIP，解压后得到 `CodexMonitor.app`。它是 Apple Silicon 构建，ad-hoc 签名、未经过 Apple 公证；不熟悉手动安装时，优先按 3.1 从源码安装，脚本会一并配置自启。Intel 用户请从源码编译。
+下载编译产物：打开上面的 CI 链接 → 最新的成功运行 → 页面底部 **Artifacts** → `CodexMonitor-macos`（下载通常需要登录 GitHub，产物会过期）。下载包中包含应用 ZIP，解压后得到 `CodexMonitor.app`。它是 Apple Silicon 构建，ad-hoc 签名、未经过 Apple 公证；不熟悉手动安装时，优先按 3.1 从源码安装，脚本会一并配置自启。Intel 用户请从源码编译。
 
 ## 4. 🧭 悬窗怎么用
 
@@ -253,6 +263,7 @@ bash scripts/install-linux.sh
 | 面板标题栏 | 上次刷新 · 立即刷新 · ⋯ 设置（刷新间隔 15 秒～5 分钟、窗口层级、开机自启、日志）· ˄ 折叠为竖条 · × 隐藏 |
 | 当前账号卡片 | 每个窗口的额度条、重置时间 + 倒计时、附加模型额度、数据来源行（`实时 · 来自 Codex 会话事件 hh:mm:ss` 或 `接口 · 上次拉取 hh:mm:ss`）、重置次数、订阅到期、Token 有效期、凭证最后刷新 |
 | 其他账号 | 一行摘要（点击展开，˄ 收起）或「全部展开 / 全部收起」；每个都有「切换」和 ⧉ 菜单：复制 auth.json 内容、复制路径、在 Finder 中显示、导出…、重新登录… |
+| 账号标签 | 每张卡片底部“添加标签／编辑标签”；直接修改已有文字、添加新标签、点垃圾桶删除，保存后与网页同步 |
 | 竖条 | 状态点、竖向额度条、剩余 %、短倒计时；只有底部箭头会展开，其他区域只用来拖动 |
 
 颜色：剩余 > 50% 绿，20–50% 橙，≤ 20% 或已达上限红；黄点 = 显示的是缓存；灰 = 尚未加载。
@@ -261,7 +272,7 @@ bash scripts/install-linux.sh
 
 ## 5. 👥 多账号：`codex-monitor` 命令行
 
-GUI 能做的事在终端里也都能做（`codex-acct` 是 `codex-monitor` 的别名）：
+账号登录、切换、导入和导出也能在终端完成（`codex-acct` 是 `codex-monitor` 的别名）：
 
 ```bash
 codex-monitor save main             # 先把现在 ~/.codex 的登录存成一个账号（只是复制一份）
@@ -345,6 +356,7 @@ tests/test_dashboard.py 排序、标签持久化/校验、认证接口、额外�
 tests/check_web_ui.mjs  Chrome 实测：多列/小屏、深浅色、中英文、标签编辑与搜索（Node 24，无 npm 依赖）
 tests/linux_smoke.sh    Docker 检查：Linux 安装脚本、已安装服务重启/标签保留、自启
 tests/run_store_tests.sh  Swift 测试（macOS）
+tests/run_annotations_tests.sh  原生标签校验、Swift/Python 互读和并发保存（macOS）
 ```
 
 ```bash
@@ -352,6 +364,7 @@ python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_
 node tests/check_web_ui.mjs                                        # Node 24 + Chrome；CHROME_BIN 可指定浏览器
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS，Swift 端
+bash tests/run_annotations_tests.sh                                    # macOS，两端标签互读/并发保存
 tar --exclude=.git -c . | docker run --rm -i python:3.8-slim bash -c 'mkdir /src && tar -x -C /src && bash /src/tests/linux_smoke.sh'
 CODEX_MONITOR_DEMO=1 CODEX_HOME="$(mktemp -d)" CODEX_ACCOUNTS_DIR="$(mktemp -d)" codex-monitor serve  # 演示账号与标签使用临时目录
 CODEX_MONITOR_DEMO=1 CODEX_MONITOR_SNAPSHOT=/tmp/panel.png ~/Applications/CodexMonitor.app/Contents/MacOS/CodexMonitor   # 悬窗渲染成 PNG

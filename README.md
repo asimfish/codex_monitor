@@ -139,20 +139,23 @@ git rev-parse HEAD
 
 #### Reproduce a specific source version
 
-This pins the CI-verified `6726148` commit in a new directory and builds/tests it without replacing the installed application:
+This pins commit `fcf115f`, which includes native tag creation, editing and deletion, in a new directory and builds/tests it without replacing the installed application:
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 6726148f2d288fc24467194aa323c4ae0fe35870
+git checkout --detach fcf115f47ab6bb3d4bbdee665d08a2eb5c98bd29
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
+bash tests/run_annotations_tests.sh
 bash scripts/build.sh
 ```
 
 Run `bash scripts/install.sh` afterward only to install that version; this replaces the existing native app. Compilation uses the system Swift toolchain without third-party Swift dependencies. Fabricated demo accounts can check layout, but do not validate real login or quota endpoints.
 
 Scrolling, automatic/manual ordering, and duplicate-profile consolidation are native-widget features. Duplicate aliases for the same workspace and user appear once; files remain on disk. The active account stays pinned, with usable quota and unexpired credentials preferred among other accounts.
+
+The native widget supports adding, editing and deleting tags. Expand the widget to find **添加标签 / 编辑标签** on each account card, or use **编辑标签** in its account menu. Follow the upgrade steps above to rebuild and install an updated native app; pulling source or restarting the web dashboard does not replace an installed app.
 
 ### 3.2 Any OS — web dashboard + CLI (Python 3.8+, no dependencies)
 
@@ -171,13 +174,20 @@ The dashboard shows what `~/.codex/auth.json` is logged in as. **Add account** �
 
 Accounts with remaining quota, valid credentials and no request error appear first, followed by unconfirmed, exhausted and invalid accounts. An invalid current login does not take the first position. Within each availability group, the current account comes first, then accounts with more remaining quota. The responsive grid shows 2–4 columns on desktop and one on small screens. Cards include all quota windows and additional limits, reset countdowns and dates, reset credits and their expiry, credit balance when supplied, subscription snapshots, credential expiry and last refresh. Status filters, search and dark mode are included.
 
-**Custom red tags (web dashboard):** click **+ Add tag** on a card, type a note such as “Account deleted” or “Cannot use”, press Enter or **Add tag**, then **Save**. Each account allows up to 8 tags of 30 characters each. Reopen the editor to remove tags with `×`; search also matches tags. Optionally check **Mark unavailable and place at the end** to move a known unusable account behind the others. Uncheck and save to restore automatic sorting. Tag text alone does not change availability.
+**Custom red tags (native widget and web dashboard):** click **Add tag / Edit tags** at the bottom of any account card, or click an existing red tag. Type a new tag and press Enter or **Add tag**. Edit existing text directly; delete with the trash button in the native editor or `×` on the web, then **Save**. Each account allows up to 8 tags of 30 characters each; web search also matches tags. Optionally mark an account unavailable: the web puts it at the end and the native widget puts it behind the other accounts, while keeping the active account pinned. Uncheck and save to restore sorting. Tag text alone does not change availability.
 
-Tags are stored in `~/.codex-accounts/_annotations.json` (under `CODEX_ACCOUNTS_DIR` when overridden). They survive refresh, restart and re-login to the same profile name; tag edits never modify `auth.json`. Keep unusable profiles in the list and label or re-login to them instead of deleting their directories.
+The native widget and web dashboard automatically sync saved tags when they use the same account directory. Tags are stored in `~/.codex-accounts/_annotations.json` (under `CODEX_ACCOUNTS_DIR` when overridden). They survive refresh, restart and re-login to the same profile name; tag edits never modify `auth.json`. Keep unusable profiles in the list and label or re-login to them instead of deleting their directories.
 
 <p align="center"><img src="docs/screenshots/dashboard-zh.png" alt="Usable-first multicolumn dashboard with fabricated accounts" width="1000"></p>
 
 <details><summary>Tag editor example (fabricated account)</summary>
+
+<p>Native widget and tag editor (simulated accounts):</p>
+
+<img src="docs/screenshots/native-tags.png" alt="Native widget with red account tags" width="372">
+<img src="docs/screenshots/native-tag-editor.png" alt="Native tag editor with editable text and add/delete controls" width="480">
+
+<p>Web tag editor:</p>
 
 <img src="docs/screenshots/dashboard-tags-zh.png" alt="Edit red tags and optionally mark an account unavailable" width="480">
 
@@ -236,15 +246,15 @@ For a headless server, run `codex-monitor serve --no-browser`, forward the dashb
 
 ### 3.3 Verification scope and downloads
 
-[Successful CI for pinned version 6726148](https://github.com/asimfish/codex_monitor/actions/runs/35210407282) verifies:
+[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `fcf115f` or newer code. The checks cover:
 
 | Check | Verified environment | Limits |
 |---|---|---|
 | Python tests, `pip install .`, CLI help | GitHub Windows, Linux and macOS runners, Python 3.11 | Does not verify real login, autostart or every desktop interaction on all three platforms |
-| Swift storage/order tests, native build and packaging | `macos-14` runner, Apple Silicon | Does not verify Intel hardware or appearance on every macOS version |
+| Swift storage/order/shared-tag tests, native build and packaging | `macos-14` runner, Apple Silicon | Does not verify Intel hardware or appearance on every macOS version |
 | Native installation, launch at login, real account use | Developer Mac: macOS 26.2, Apple Silicon | Does not guarantee identical transparency on another Mac |
 
-For the compiled app, open the CI link above → **Artifacts** → `CodexMonitor-macos` (GitHub sign-in is usually required; artifacts expire). The download contains an application ZIP; extract it to obtain `CodexMonitor.app`. This is an Apple Silicon build, ad-hoc signed and not Apple-notarized. Section 3.1's source installer is recommended and also configures autostart. Intel users should build from source.
+For the compiled app, open the CI link above → the latest successful run → **Artifacts** → `CodexMonitor-macos` (GitHub sign-in is usually required; artifacts expire). The download contains an application ZIP; extract it to obtain `CodexMonitor.app`. This is an Apple Silicon build, ad-hoc signed and not Apple-notarized. Section 3.1's source installer is recommended and also configures autostart. Intel users should build from source.
 
 ## 4. 🧭 Using the widget
 
@@ -254,6 +264,7 @@ For the compiled app, open the CI link above → **Artifacts** → `CodexMonitor
 | Panel header | last refresh · refresh now · ⋯ settings (refresh interval 15 s – 5 min, window level, launch at login, log) · ˄ collapse to strip · × hide |
 | Active card | quota bars per window, reset time + countdown, per-model limits, data-source line (`live · from Codex session event hh:mm:ss` or `API · fetched hh:mm:ss`), reset credits, subscription expiry, token validity, last refresh |
 | Other accounts | one-line rows (click a row to expand, ˄ to collapse) or **Expand all / Collapse all**; each has **Switch** and a ⧉ menu: copy `auth.json` contents, copy path, reveal in Finder, export…, re-login… |
+| Account tags | Add/edit controls on every card; edit existing text, add new tags or delete with the trash button, then save to sync with the web |
 | Strip | status dot, vertical quota bar, remaining %, short countdown; only the bottom arrow expands (the rest just drags) |
 
 Colours: green > 50 % remaining, orange 20–50 %, red ≤ 20 % or limit reached; yellow dot = showing cached data; grey = not loaded yet.
@@ -262,7 +273,7 @@ Click “调整顺序” (reorder) beside the other-accounts heading, then use t
 
 ## 5. 👥 Multiple accounts — `codex-monitor` CLI
 
-Everything the GUI does is also available from the terminal (`codex-acct` is an alias of `codex-monitor`):
+Account login, switching, import and export are also available from the terminal (`codex-acct` is an alias of `codex-monitor`):
 
 ```bash
 codex-monitor save main             # archive the current ~/.codex login as an account (just a copy)
@@ -346,6 +357,7 @@ tests/test_dashboard.py sorting, persistent/validated tags, authenticated API an
 tests/check_web_ui.mjs  real Chrome layout, light/dark, EN/ZH, tag editing/search (Node 24, no npm dependencies)
 tests/linux_smoke.sh    Linux installer, installed dashboard restart/tag persistence and autostart checks
 tests/run_store_tests.sh  Swift tests (macOS)
+tests/run_annotations_tests.sh  native tag validation, Swift/Python interoperability and concurrent saves (macOS)
 ```
 
 ```bash
@@ -353,6 +365,7 @@ python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_
 node tests/check_web_ui.mjs                                        # Node 24 + Chrome; override with CHROME_BIN
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS, Swift side
+bash tests/run_annotations_tests.sh                                    # macOS, shared tags and concurrent saves
 tar --exclude=.git -c . | docker run --rm -i python:3.8-slim bash -c 'mkdir /src && tar -x -C /src && bash /src/tests/linux_smoke.sh'
 CODEX_MONITOR_DEMO=1 CODEX_HOME="$(mktemp -d)" CODEX_ACCOUNTS_DIR="$(mktemp -d)" codex-monitor serve  # isolated demo accounts and tags
 CODEX_MONITOR_DEMO=1 CODEX_MONITOR_SNAPSHOT=/tmp/panel.png ~/Applications/CodexMonitor.app/Contents/MacOS/CodexMonitor   # widget → PNG
