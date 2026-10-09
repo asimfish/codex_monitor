@@ -137,12 +137,12 @@ git rev-parse HEAD
 
 #### 复现一个确定的源码版本
 
-下面锁定到包含原生标签增删改和重复存档删除功能的 `31948b8` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
+下面锁定到包含原生标签增删改、重复存档删除和账号重命名功能的 `b310a5e` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 31948b860476fc34a9a7acf68ec984c47a80efff
+git checkout --detach b310a5eb6522d1b169961fa8c271b68839bbed86
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
@@ -160,9 +160,11 @@ bash scripts/build.sh
 
 <details><summary>管理账号窗口（模拟账号）</summary>
 
-<img src="docs/screenshots/native-account-manager.png" alt="按存档名称选择删除账号" width="540">
+<img src="docs/screenshots/native-account-manager.png" alt="按存档名称重命名或删除账号" width="540">
 
 </details>
+
+**原生悬窗重命名：**账号菜单 → **重命名账号…**，也可从 **管理账号** 中点击对应存档的重命名按钮，输入新名称后确认。修改的是存档目录名称，邮箱不变；登录、标签、不可用标记、历史记录和原生手动排序会保留。名称支持 1–80 个字母（含中文）、数字、空格、点、下划线或连字符，不能以点或下划线开头、以点结尾，也不能使用 `main`、`CON` 等系统保留名称。已存在的名称（包括登录失败的空目录）不能被覆盖。只有主登录时，先保存为账号存档再重命名。引用旧账号目录的脚本需同步更新路径。
 
 ### 3.2 任意系统：网页仪表盘 + 命令行（Python 3.8+，零依赖）
 
@@ -201,6 +203,8 @@ codex-monitor autostart install   # 开机自启：LaunchAgent / systemd 用户�
 </details>
 
 **网页删除账号：**卡片右上角 `⋯` → **删除账号…** → 确认。空目录、未登录账号也可删除；正在登录的账号须先完成或取消登录。误删后，从账号目录的 `_deleted` 子目录中将原账号文件夹移回账号目录根部，保留原名称，刷新列表即可恢复，原标签也会恢复。它与“退出登录”不同：删除把选中的存档移出列表，退出登录保留列表项以便重新登录。
+
+**网页重命名：**卡片右上角 `⋯` → **重命名账号…** → 输入新名称。登录、标签和卡片展开状态会保留，刷新网页后仍生效。正在登录时须先完成或取消登录。两端使用相同账号目录时，悬窗会自动读到新名称。
 
 同样的事在终端里：
 
@@ -256,7 +260,7 @@ bash scripts/install-linux.sh
 
 ### 3.3 验证范围与下载
 
-[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `31948b8` 或更新代码、且显示成功的运行。检查范围如下：
+[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `b310a5e` 或更新代码、且显示成功的运行。检查范围如下：
 
 | 检查 | 已验证环境 | 不代表什么 |
 |---|---|---|
@@ -275,7 +279,7 @@ bash scripts/install-linux.sh
 | 当前账号卡片 | 每个窗口的额度条、重置时间 + 倒计时、附加模型额度、数据来源行（`实时 · 来自 Codex 会话事件 hh:mm:ss` 或 `接口 · 上次拉取 hh:mm:ss`）、重置次数、订阅到期、Token 有效期、凭证最后刷新 |
 | 其他账号 | 一行摘要（点击展开，˄ 收起）或「全部展开 / 全部收起」；每个都有「切换」和 ⧉ 菜单：复制 auth.json 内容、复制路径、在 Finder 中显示、导出…、重新登录… |
 | 账号标签 | 每张卡片底部“添加标签／编辑标签”；直接修改已有文字、添加新标签、点垃圾桶删除，保存后与网页同步 |
-| 管理账号 | 悬窗底部或设置菜单打开；显示每个实际存档的名字、邮箱和目录，逐项删除重复存档；保留本地备份 |
+| 管理账号 | 悬窗底部或设置菜单打开；显示每个实际存档的名字、邮箱和目录，可重命名、逐项删除重复存档；删除保留本地备份 |
 | 竖条 | 状态点、竖向额度条、剩余 %、短倒计时；只有底部箭头会展开，其他区域只用来拖动 |
 
 颜色：剩余 > 50% 绿，20–50% 橙，≤ 20% 或已达上限红；黄点 = 显示的是缓存；灰 = 尚未加载。
@@ -301,6 +305,7 @@ eval "$(codex-monitor env alt1)"    # 当前 shell 后续的 codex 都用 alt1�
 codex-monitor export work ~/tmp/    # 拷一份给别的机器
 codex-monitor sync                  # 把 ~/.codex 里刷新过的 token 同步回所属账号目录
 codex-monitor refresh work          # （可选，需确认）显式刷新 token
+codex-monitor rename work "工作账号" # 重命名该存档，保留登录、标签和历史记录
 ```
 
 目录结构：
@@ -367,6 +372,7 @@ tests/test_python.py    解析、tail、视图、OAuth（伪造回调）、401 �
 tests/test_cli.py       命令行沙盒端到端测试（临时 CODEX_HOME、伪造 JWT、不联网）
 tests/test_dashboard.py 排序、标签持久化/校验、认证接口、额外额度（临时目录、模拟账号）
 tests/test_removal.py   单个重复存档删除、恢复、失效选择/路径保护、登录中阻止、认证接口和延迟刷新检查
+tests/test_rename.py    重命名持久化、凭证/标签/历史保留、重名阻止、失败回滚、中文导出和认证接口
 tests/check_web_ui.mjs  Chrome 实测：多列/小屏、深浅色、中英文、标签编辑与搜索（Node 24，无 npm 依赖）
 tests/linux_smoke.sh    Docker 检查：Linux 安装脚本、已安装服务重启/标签保留、自启
 tests/run_store_tests.sh  Swift 测试（macOS）
@@ -374,7 +380,7 @@ tests/run_annotations_tests.sh  原生标签校验、Swift/Python 互读和并�
 ```
 
 ```bash
-python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py && python3 tests/test_removal.py
+python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py && python3 tests/test_removal.py && python3 tests/test_rename.py
 node tests/check_web_ui.mjs                                        # Node 24 + Chrome；CHROME_BIN 可指定浏览器
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS，Swift 端

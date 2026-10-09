@@ -59,7 +59,7 @@ Codex Monitor solves all three: a read-only widget that shows every account's qu
 - Every account lives in its own `~/.codex-accounts/<name>/` directory, which doubles as an isolated `CODEX_HOME`. Switching copies one file; `codex-monitor run <name>` runs Codex with a different account in parallel without switching at all.
 - Refreshed tokens are synced back: when Codex rewrites `~/.codex/auth.json`, the stored copy of that account is updated, so your archive never holds a stale refresh token.
 
-**Web dashboard + CLI (`codex-monitor`)** — the same panel as a local web page for macOS / Linux / Windows, plus `add`, `relogin`, `import`, `save`, `list`, `status`, `use`, `run`, `env`, `export`, `sync`, `refresh`, `remove`, `serve`, `autostart`. Python 3.8+, standard library only; `codex-acct` is an alias.
+**Web dashboard + CLI (`codex-monitor`)** — the same panel as a local web page for macOS / Linux / Windows, plus `add`, `relogin`, `import`, `save`, `list`, `status`, `use`, `run`, `env`, `export`, `sync`, `refresh`, `rename`, `remove`, `serve`, `autostart`. Python 3.8+, standard library only; `codex-acct` is an alias.
 
 ## 3. 🚀 Quick Start
 
@@ -139,12 +139,12 @@ git rev-parse HEAD
 
 #### Reproduce a specific source version
 
-This pins commit `31948b8`, which includes native tag editing and individual account archive removal, in a new directory and builds/tests it without replacing the installed application:
+This pins commit `b310a5e`, which includes native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 31948b860476fc34a9a7acf68ec984c47a80efff
+git checkout --detach b310a5eb6522d1b169961fa8c271b68839bbed86
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
@@ -160,9 +160,11 @@ The native widget supports adding, editing and deleting tags. Expand the widget 
 
 **Clean up duplicate archives:** each account menu has **删除账号…** (Delete account). Open **管理账号** (Manage accounts) at the bottom of the widget or in settings to see every stored directory, including aliases merged in the widget. Names, emails and paths make the selected archive clear. After confirmation, only that directory moves to `~/.codex-accounts/_deleted/<unique-id>/<original-name>` (under `CODEX_ACCOUNTS_DIR` when overridden); other aliases and the current main login remain. The main-only login has no delete entry; use logout to sign out.
 
+**Rename an account:** choose **重命名账号…** in its native account menu or next to its name in **管理账号**. Enter a new name and confirm. This changes the archive's directory name; the email stays unchanged. Login, tags, unavailable status, history and native manual ordering are kept. Names allow 1–80 letters (including Chinese), numbers, spaces, dots, underscores or hyphens; avoid leading dots/underscores, a trailing dot and reserved names such as `main` or `CON`. Existing names, including empty failed-login directories, cannot be overwritten. A main-only login must first be saved as an account. Update any scripts that refer to the old account directory.
+
 <details><summary>Manage accounts window (fabricated accounts)</summary>
 
-<img src="docs/screenshots/native-account-manager.png" alt="Choose one account archive by name to delete" width="540">
+<img src="docs/screenshots/native-account-manager.png" alt="Choose one account archive by name to rename or delete" width="540">
 
 </details>
 
@@ -203,6 +205,8 @@ The native widget and web dashboard automatically sync saved tags when they use 
 </details>
 
 **Delete in the web dashboard:** account card `⋯` → **Delete account…** → confirm. Empty or signed-out profiles can also be removed; finish or cancel a pending login first. To undo a deletion, move the original account folder from `_deleted` back to the account-directory root with its original name, then refresh. Its saved tags return too. Deletion removes the selected archive from the list; logout keeps a row for re-login.
+
+**Rename in the web dashboard:** account card `⋯` → **Rename account…** → enter the new name. Login, tags and expansion state survive the rename and page reload. Finish or cancel a pending login first. When both interfaces share the same account store, the native widget picks up the new name automatically.
 
 The same things from the terminal:
 
@@ -257,7 +261,7 @@ For a headless server, run `codex-monitor serve --no-browser`, forward the dashb
 
 ### 3.3 Verification scope and downloads
 
-[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `31948b8` or newer code. The checks cover:
+[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `b310a5e` or newer code. The checks cover:
 
 | Check | Verified environment | Limits |
 |---|---|---|
@@ -276,7 +280,7 @@ For the compiled app, open the CI link above → the latest successful run → *
 | Active card | quota bars per window, reset time + countdown, per-model limits, data-source line (`live · from Codex session event hh:mm:ss` or `API · fetched hh:mm:ss`), reset credits, subscription expiry, token validity, last refresh |
 | Other accounts | one-line rows (click a row to expand, ˄ to collapse) or **Expand all / Collapse all**; each has **Switch** and a ⧉ menu: copy `auth.json` contents, copy path, reveal in Finder, export…, re-login… |
 | Account tags | Add/edit controls on every card; edit existing text, add new tags or delete with the trash button, then save to sync with the web |
-| Manage accounts | Open from the widget footer or settings to see all archive names, emails and paths; remove individual aliases with a local backup |
+| Manage accounts | Open from the widget footer or settings to see all archive names, emails and paths; rename archives or remove individual aliases with a local backup |
 | Strip | status dot, vertical quota bar, remaining %, short countdown; only the bottom arrow expands (the rest just drags) |
 
 Colours: green > 50 % remaining, orange 20–50 %, red ≤ 20 % or limit reached; yellow dot = showing cached data; grey = not loaded yet.
@@ -302,6 +306,7 @@ eval "$(codex-monitor env alt1)"    # same, for every codex call in this shell (
 codex-monitor export work ~/tmp/    # copy an auth.json out for another machine
 codex-monitor sync                  # pull a refreshed ~/.codex/auth.json back into its account directory
 codex-monitor refresh work          # (optional, confirmed) explicit token refresh
+codex-monitor rename work "Work account"  # rename this archive; keep login, tags and history
 ```
 
 Layout:
@@ -368,6 +373,7 @@ tests/test_python.py    parsing, tailer, views, OAuth (fake callback), auto-refr
 tests/test_cli.py       sandboxed end-to-end test of the CLI (temp CODEX_HOME, fake JWTs, no network)
 tests/test_dashboard.py sorting, persistent/validated tags, authenticated API and additional quota
 tests/test_removal.py   alias deletion/recovery, stale selection/path protection, pending-login denial, authenticated API and late refresh checks
+tests/test_rename.py    rename persistence, credentials/tags/history preservation, collisions, rollback, Unicode export and authenticated API
 tests/check_web_ui.mjs  real Chrome layout, light/dark, EN/ZH, tag editing/search (Node 24, no npm dependencies)
 tests/linux_smoke.sh    Linux installer, installed dashboard restart/tag persistence and autostart checks
 tests/run_store_tests.sh  Swift tests (macOS)
@@ -375,7 +381,7 @@ tests/run_annotations_tests.sh  native tag validation, Swift/Python interoperabi
 ```
 
 ```bash
-python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py && python3 tests/test_removal.py
+python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py && python3 tests/test_removal.py && python3 tests/test_rename.py
 node tests/check_web_ui.mjs                                        # Node 24 + Chrome; override with CHROME_BIN
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS, Swift side
