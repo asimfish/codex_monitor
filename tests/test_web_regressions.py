@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Web audit regressions. All credentials, accounts and HTTP calls are local fixtures."""
 import copy
+import http.client
 import json
 import os
+import socket
 import sys
 import tempfile
 import threading
@@ -68,6 +70,28 @@ class WebRegressions(unittest.TestCase):
                 status, _, _ = self.request('/api/import', {'name': name, 'text': json.dumps(auth)})
                 self.assertEqual(status, 400)
                 self.assertFalse((paths.accounts_dir()/name/'auth.json').exists())
+
+    def test_oversized_upload_reports_413_with_limited_send_buffer(self):
+        connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
+        self.addCleanup(connection.close)
+        connection.connect()
+        connection.sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 1024)
+        body = json.dumps({'name': 'too-big', 'text': 'x' * 300000}).encode()
+        connection.request('POST', '/api/import', body=body,
+                           headers={'X-Token': 'audit-fixture', 'Content-Type': 'application/json'})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 413)
+        self.assertEqual(json.loads(response.read())['error'], 'request body too large')
+        self.assertFalse((paths.accounts_dir()/'too-big').exists())
+
+    def test_oversized_body_without_payload_is_bounded(self):
+        connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=3)
+        self.addCleanup(connection.close)
+        connection.request('POST', '/api/import', body=b'',
+                           headers={'X-Token': 'audit-fixture', 'Content-Length': '1000000000'})
+        response = connection.getresponse()
+        self.assertEqual(response.status, 413)
+        self.assertEqual(json.loads(response.read())['error'], 'request body too large')
 
     def test_string_force_flag_cannot_overwrite_credentials(self):
         before = (paths.accounts_dir()/'a'/'auth.json').read_bytes()

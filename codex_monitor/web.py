@@ -6,6 +6,7 @@ import json
 import secrets
 import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -68,6 +69,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if n < 0:
             raise StoreError("Invalid request length")
         if n > 262144:
+            self.close_connection = True
+            self._discard_body(n)
             raise ValueError("request body too large")
         if n == 0:
             return {}
@@ -78,6 +81,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             raise StoreError("Request body must be a JSON object")
         return data
+
+    def _discard_body(self, size: int) -> None:
+        # Closing with unread upload bytes can reset TCP before the client sees 413.
+        # Drain in bounded chunks with a total deadline; never parse or retain them.
+        deadline = time.monotonic() + 1
+        original_timeout = self.connection.gettimeout()
+        try:
+            while size > 0:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                self.connection.settimeout(remaining)
+                chunk = self.rfile.read1(min(size, 65536))
+                if not chunk:
+                    break
+                size -= len(chunk)
+        except OSError:
+            pass
+        finally:
+            self.connection.settimeout(original_timeout)
 
     # ------------------------------------------------------------ routes
 
