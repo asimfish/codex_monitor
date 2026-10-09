@@ -5,6 +5,7 @@ import os
 import threading
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Iterator
 
 
 class LockBusyError(Exception):
@@ -17,7 +18,7 @@ _local = threading.local()
 
 
 @contextmanager
-def file_lock(path: Path, blocking: bool = True):
+def file_lock(path: Path, blocking: bool = True) -> Iterator[None]:
     key = str(path.resolve())
     with _guard:
         lock = _locks.setdefault(key, threading.RLock())
