@@ -50,6 +50,8 @@ Codex Monitor solves all three: a read-only widget that shows every account's qu
 - **Real-time** — the panel tails Codex session rollouts and updates within a second of each model response; the usage API (30 s by default) is the fallback and calibration.
 - **Collapsible** (widget): full panel → the active account as a card and the others as one-line rows (or all expanded) → a 46-px vertical strip pinned to the screen edge. Non-activating floating panel (clicking it never steals focus), draggable, remembers position, three window levels, starts at login via a LaunchAgent.
 - **Dashboard** (any OS): the same cards in a local web page, bilingual, `--app` opens it as a chromeless window; starts at login via `codex-monitor autostart install`.
+- **Use reset cards** (web dashboard): click **Use reset card** beside an account's reset-credit count and confirm. The action consumes one applicable card, then refreshes the quota and count. Expired credentials must be renewed first. An uncertain timeout offers **Check reset result**, including after a page reload, to retry the same operation without requesting another card.
+- **Web controls**: larger quota and status cards, a dedicated reset-card action, light/dark/system themes, status filters and sorting with saved preferences. Press `/` to search and `Esc` to close dialogs. Connection loss keeps the last received data visible with a retry action. **Credit balance** stays visible when a card is collapsed; zero, unlimited and unreported (`—`) values are distinct.
 - One-click **switch** between accounts, **copy / export** any account's `auth.json`, **re-login** an account whose session was revoked. When switching away from an unarchived current login, the app automatically saves it as a profile and keeps a backup.
 
 **Multi-account**
@@ -57,7 +59,7 @@ Codex Monitor solves all three: a read-only widget that shows every account's qu
 - **Add accounts from the GUI**: an OAuth (authorization code + PKCE) login that opens the authorize page in a *private* browser window, so the account you are already logged into in your browser is never picked by mistake. No ChatGPT setting needs to be enabled.
 - Device-code login as a fallback (for remote / headless use).
 - Every account lives in its own `~/.codex-accounts/<name>/` directory, which doubles as an isolated `CODEX_HOME`. Switching copies one file; `codex-monitor run <name>` runs Codex with a different account in parallel without switching at all.
-- Refreshed tokens are synced back: when Codex rewrites `~/.codex/auth.json`, the stored copy of that account is updated, so your archive never holds a stale refresh token.
+- Refreshed tokens are synced back to matching saved copies. If the same account has several independent sessions and the source cannot be identified, Python account synchronization preserves those files; re-login to the intended profile to update it.
 
 **Web dashboard + CLI (`codex-monitor`)** — the same panel as a local web page for macOS / Linux / Windows, plus `add`, `relogin`, `import`, `save`, `list`, `status`, `use`, `run`, `env`, `export`, `sync`, `refresh`, `rename`, `remove`, `serve`, `autostart`. Python 3.8+, standard library only; `codex-acct` is an alias.
 
@@ -183,7 +185,7 @@ codex-monitor autostart install   # start it at login: LaunchAgent / systemd use
 
 The dashboard shows what `~/.codex/auth.json` is logged in as. **Add account** → name it → **Open in … private window** → sign in with the other ChatGPT account → the page redirects to `localhost:1455` and the new account appears. Everything else (switch, copy/export `auth.json`, re-login) is a button on the card.
 
-Accounts with remaining quota, valid credentials and no request error appear first, followed by unconfirmed, exhausted and invalid accounts. An invalid current login does not take the first position. Within each availability group, the current account comes first, then accounts with more remaining quota. The responsive grid shows 2–4 columns on desktop and one on small screens. Cards include all quota windows and additional limits, reset countdowns and dates, reset credits and their expiry, credit balance when supplied, subscription snapshots, credential expiry and last refresh. Status filters, search and dark mode are included.
+Accounts with remaining quota, valid credentials and no request error appear first, followed by unconfirmed, exhausted and invalid accounts. An invalid current login does not take the first position. Within each availability group, the current account comes first, then accounts with more remaining quota. The responsive grid shows 2–4 columns on desktop and one on small screens. Cards include the standard quota windows, reset countdowns and dates, reset cards and their expiry, credit balance when supplied, subscription snapshots, credential expiry and last refresh. Additional feature-specific quotas remain available through the CLI and native widget. Status filters, search and dark mode are included.
 
 **Custom red tags (native widget and web dashboard):** click **Add tag / Edit tags** at the bottom of any account card, or click an existing red tag. Type a new tag and press Enter or **Add tag**. Edit existing text directly; delete with the trash button in the native editor or `×` on the web, then **Save**. Each account allows up to 8 tags of 30 characters each; web search also matches tags. Optionally mark an account unavailable: the web puts it at the end and the native widget puts it behind the other accounts, while keeping the active account pinned. Uncheck and save to restore sorting. Tag text alone does not change availability.
 
@@ -333,6 +335,7 @@ Layout:
 | `auth.json` (JWT claims) | email, plan, account id, **subscription period as checked at login** (`chatgpt_subscription_last_checked`), access-token lifetime | on change (polled every 10 s) |
 | `GET {chatgpt_base_url}/wham/usage` | rate-limit windows, per-model limits, credits, reset-credit count | every 30 s (configurable 15 s – 5 min) |
 | `GET …/wham/rate-limit-reset-credits` | reset coupons and their expiry | every 3 min |
+| `POST …/wham/rate-limit-reset-credits/consume` | use one banked reset card | only after confirming the account-card action |
 | `~/.codex/sessions/**/rollout-*.jsonl` (`token_count` events) | **real-time** rate limits after every model response of CLI / `codex exec` sessions — identical to what the Codex app shows | tailed every 1 s (only bytes appended to files modified in the last 15 min; every day directory is walked every 10 s because long-lived threads sit under their creation date) |
 | `$CODEX_HOME/logs_*.sqlite` rows `account/rateLimits/updated` | **trigger** for desktop-app usage: those threads no longer write rollouts, but the app-server logs one row per rate-limit update, so the usage API is fetched immediately | checked every 1 s (indexed query, ~20 ms) |
 
@@ -346,7 +349,7 @@ Codex Monitor does not refresh tokens on a schedule and never rewrites a *workin
 
 - user actions: *Switch*, *Save as account*, *Refresh token…*, *Re-login…*;
 - the one-way "adopt" copy that mirrors a `~/.codex/auth.json` Codex itself just refreshed into the matching account directory (no network involved);
-- **automatic refresh after a 401**: when the server rejects an access token (or it has expired), the refresh token is exchanged **once per account per 10 minutes** and the fetch is retried — exactly what Codex does on a 401. A rejected token is already dead everywhere, so this cannot break a copy on another machine; without it a revoked session would keep showing stale numbers forever (the plan badge stuck on an old value, for example). Disable with the widget's *401 时自动刷新* toggle, `codex-monitor serve --no-auto-refresh`, or `CODEX_MONITOR_NO_AUTO_REFRESH=1`. If the refresh itself fails the card says the session was revoked and offers *Re-login*.
+- **automatic refresh after a 401**: when the server rejects an access token (or it has expired), the refresh token is exchanged **once per account per 10 minutes** and the fetch is retried — exactly what Codex does on a 401. Refresh-token rotation may invalidate untouched copies on other machines; matching local session copies are synchronized. Without automatic refresh, a revoked session would keep showing stale numbers forever (the plan badge stuck on an old value, for example). Disable with the widget's *401 时自动刷新* toggle, `codex-monitor serve --no-auto-refresh`, or `CODEX_MONITOR_NO_AUTO_REFRESH=1`. If the refresh itself fails the card says the session was revoked and offers *Re-login*.
 
 **Two implementations, one behaviour.** The Swift widget and the Python package implement the same store layout, the same API calls, the same rollout tailing and the same OAuth flow; both are covered by the tests in `tests/`. Proxies: the Python side honours `HTTPS_PROXY`/`HTTP_PROXY`, the macOS system proxy (`scutil --proxy`) and the Windows registry proxy; the widget uses the system proxy through URLSession.
 
@@ -365,7 +368,8 @@ Browser mode reproduces Codex CLI's own OAuth client: same `client_id`, `redirec
 
 ```
 codex_monitor/          Python package (stdlib only, 3.8+): store, usage API + rollout tailer, OAuth, web dashboard, autostart
-  web.py / web_i18n.py  the dashboard (single HTML page, EN + 中文)
+  web.py / web_i18n.py  HTTP routes and EN + 中文 strings
+  web_static/           packaged HTML, CSS and JavaScript (served inline, no CDN)
 bin/codex-monitor       run the CLI straight from a checkout (bin/codex-acct is the same thing)
 Sources/CodexMonitor/   Swift (SwiftUI + AppKit) native widget; Strings*.swift hold all its text
 scripts/build.sh        swiftc build + ad-hoc codesign;  scripts/install.sh / uninstall.sh
@@ -376,6 +380,10 @@ tests/test_removal.py   alias deletion/recovery, stale selection/path protection
 tests/test_rename.py    rename persistence, credentials/tags/history preservation, collisions, rollback, Unicode export and authenticated API
 tests/check_web_ui.mjs  real Chrome layout, light/dark, EN/ZH, tag editing/search (Node 24, no npm dependencies)
 tests/linux_smoke.sh    Linux installer, installed dashboard restart/tag persistence and autostart checks
+tests/test_reset_credits.py  reset-card HTTP contract, confirmation, replay/concurrency guards and quota refresh (fabricated responses)
+tests/test_web_regressions.py  import validation, refresh identity/concurrency guards, login finalization, alias updates, OAuth escaping and credential cache headers
+tests/test_recovery.py     cancelled/staged login integrity, ordered quota commits, alias token sync, malformed responses and durable reset recovery
+tests/test_web_ui.cjs   optional Playwright browser checks: menu visibility, expired credentials and re-login recovery
 tests/run_store_tests.sh  Swift tests (macOS)
 tests/run_annotations_tests.sh  native tag validation, Swift/Python interoperability and concurrent saves (macOS)
 ```
@@ -383,6 +391,10 @@ tests/run_annotations_tests.sh  native tag validation, Swift/Python interoperabi
 ```bash
 python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py && python3 tests/test_removal.py && python3 tests/test_rename.py
 node tests/check_web_ui.mjs                                        # Node 24 + Chrome; override with CHROME_BIN
+python3 tests/test_web_regressions.py
+python3 tests/test_reset_credits.py                                  # no real reset cards consumed
+python3 tests/test_recovery.py
+node tests/test_web_ui.cjs                                           # requires Playwright + Chromium; optional PLAYWRIGHT_MODULE=/path/to/playwright-core
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS, Swift side
 bash tests/run_annotations_tests.sh                                    # macOS, shared tags and concurrent saves
@@ -396,11 +408,13 @@ The Swift build happens in `~/Library/Caches/CodexMonitor/build` because iCloud-
 
 ## 9. ❓ FAQ
 
-**A card shows an old plan / old numbers.** The account's token was probably rejected (401) and, if automatic refresh is off or the refresh token was revoked too, no fresh data can arrive; the yellow dot and the "cached data" note say so. Turn automatic refresh on, or use *Re-login…* on that account.
+**Reset-card recovery:** pending operation IDs and confirmed results are stored separately from credentials in `~/.codex-accounts/_reset_requests/` (under `CODEX_ACCOUNTS_DIR` when set). After a timeout, restart or opening another tab, use **Check reset result** to retry the same operation. An unresolved request blocks a new spend for that account. Do not delete recovery records while an outcome is unknown.
+
+**A card shows an old plan / old numbers.** The account's token was probably rejected (401) and, if automatic refresh is off or the refresh token was revoked too, no fresh data can arrive; the yellow dot and the "cached data" note say so. Expired accounts show **Refresh token** and **Re-login…** buttons directly on the web card; both actions are also in its ⋯ account menu. If token refresh fails, the dialog offers re-login using the browser or a fresh `auth.json`.
 
 **The subscription date does not match what I just bought.** That field is a *snapshot taken when the account logged in* (`chatgpt_subscription_last_checked` in the id_token). Token refreshes do not re-check it and no endpoint reachable with a Codex token returns the live billing period, so the card labels it "snapshot at login" and shows the check time. The *plan* badge is live from the usage API. Re-login the account to refresh the snapshot.
 
-**"Credential (auto-renews) until …" — is my account expiring?** No. Access tokens live 10 days and Codex (and the monitor, after a 401) renews them automatically; the line only tells you how old the current credential is. It turns red only if a token is actually expired and could not be renewed.
+**"Credential (auto-renews) until …" — is my account expiring?** This is the current access token's expiry, read from its signed payload. Codex and the monitor can renew it using a valid refresh token. OpenAI determines the expiry; importing or editing `auth.json` cannot extend it to one year. An expired or revoked refresh token requires re-login.
 
 **The device-code page says to enable device code authorization.** Enable it under ChatGPT → Settings → Security for that account, or simply use the default browser login.
 

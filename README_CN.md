@@ -48,6 +48,7 @@ Codex Monitor 把这三件事一起解决：一个只读的悬窗显示所有账
 - **实时**：面板 tail Codex 的会话 rollout，每轮模型响应后 1 秒内更新；用量接口（默认 30 秒）作为兜底和校准。
 - **可折叠**（悬窗）：完整面板 → 当前账号是完整卡片、其他账号一行摘要（或全部展开）→ 贴屏幕边的 46px 竖条。非激活浮动面板（点它不抢焦点）、可拖动、记住位置、三种层级、LaunchAgent 开机自启。
 - **仪表盘**（任意系统）：同样的卡片做成本地网页，中英双语，`--app` 可以开成无边框的独立窗口；`codex-monitor autostart install` 开机自启。
+- **网页交互**：更易读的额度与状态卡片，独立重置卡操作区，浅色/深色/跟随系统，状态筛选与排序；偏好保存在浏览器。按 `/` 搜索、`Esc` 关闭弹窗，断线时保留最后收到的数据并提示重试。「额度包余额」在卡片收起时仍然可见，区分零余额、不限额与接口未提供（`—`）。
 - 一键**切换**账号、**复制 / 导出**任意账号的 `auth.json`、**重新登录**被服务端作废会话的账号。切换时如果当前账号还没有存档，工具会先自动保存到账号列表并保留一份备份，避免账号“消失”。
 
 **多账号**
@@ -55,7 +56,7 @@ Codex Monitor 把这三件事一起解决：一个只读的悬窗显示所有账
 - **在 GUI 里添加账号**：App 自己实现的 OAuth（授权码 + PKCE）登录，把授权页开在浏览器*隐身窗口*里，不会误选浏览器里已登录的账号。**不需要在 ChatGPT 里开任何设置。**
 - 设备码登录作为备选（远程 / 无浏览器时）。
 - 每个账号一个 `~/.codex-accounts/<名字>/` 目录，同时就是一个隔离的 `CODEX_HOME`。切换只是拷一个文件；`codex-monitor run <名字>` 可以不切换、直接用另一个账号并行跑 Codex。
-- 刷新过的 token 会回流：Codex 改写 `~/.codex/auth.json` 后，对应账号的存档会同步更新，存档里永远是最新的 refresh_token。
+- 刷新过的 token 会回流到匹配的凭证副本。若同一账号有多个独立会话、无法确认来源，Python 账号同步会保留现有文件，可在指定账号上重新登录更新。
 
 **网页仪表盘 + 命令行 `codex-monitor`**：`serve`、`autostart`、`add`、`relogin`、`import`、`save`、`list`、`status`、`use`、`run`、`env`、`export`、`sync`、`refresh`、`remove`。Python 3.8+，仅标准库；`codex-acct` 是同一个命令的别名。
 
@@ -181,7 +182,7 @@ codex-monitor autostart install   # 开机自启：LaunchAgent / systemd 用户�
 
 仪表盘显示 `~/.codex/auth.json` 当前登录的账号。**添加账号** → 起名 → **用 … 隐身窗口打开** → 用另一个 ChatGPT 账号登录 → 页面跳回 `localhost:1455`，新账号出现。切换、复制/导出 `auth.json`、重新登录都是卡片上的按钮。
 
-网页默认优先展示**有额度、凭证未过期、请求正常**的账号，再显示待确认、额度耗尽、登录失效的账号；正在使用但已失效的账号也会靠后。同一可用性分组内优先显示使用中的账号，再按最低剩余额度从高到低排列。宽屏按窗口宽度显示 2–4 列，小屏单列。卡片显示每个额度窗口的百分比、重置倒计时和具体时间，额外额度、重置次数及到期时间、余额（接口提供时）、订阅快照、凭证有效期和最后刷新时间；支持状态筛选、搜索与深色模式。
+网页默认优先展示**有额度、凭证未过期、请求正常**的账号，再显示待确认、额度耗尽、登录失效的账号；正在使用但已失效的账号也会靠后。同一可用性分组内优先显示使用中的账号，再按最低剩余额度从高到低排列。宽屏按窗口宽度显示 2–4 列，小屏单列。卡片显示标准额度窗口的百分比、重置倒计时和具体时间，重置卡及到期时间、余额（接口提供时）、订阅快照、凭证有效期和最后刷新时间；专项额度仍可通过命令行和原生悬窗查看；支持状态筛选、搜索与深色模式。
 
 **自定义红色标签（原生悬窗和网页版）：**每张账号卡片底部都有 **添加标签／编辑标签**，点已有红色标签也能打开编辑窗口。输入新标签后点 **添加标签** 或回车；已有标签可直接修改文字。原生悬窗点垃圾桶删除，网页点 `×` 删除，最后点 **保存**。每个账号最多 8 个标签，每个最多 30 字；网页搜索也会匹配标签。如果确认账号不能用，可勾选 **标记为不可用**；网页会排到最后，原生悬窗会在“其他账号”里排到后面，当前使用账号仍固定在顶部。取消勾选并保存可恢复排序。普通标签只作备注，不会自动改变账号状态。
 
@@ -332,6 +333,7 @@ codex-monitor rename work "工作账号" # 重命名该存档，保留登录、�
 | `auth.json`（JWT claims） | 邮箱、套餐、账号 id、**登录时核验的订阅周期**（`chatgpt_subscription_last_checked`）、access token 有效期 | 变化即读（每 10 秒轮询 mtime） |
 | `GET {chatgpt_base_url}/wham/usage` | 限速窗口、附加模型额度、额度包、重置券数量 | 每 30 秒（可选 15 秒～5 分钟） |
 | `GET …/wham/rate-limit-reset-credits` | 重置券及其到期日 | 每 3 分钟 |
+| `POST …/wham/rate-limit-reset-credits/consume` | 使用一张重置卡 | 仅在账号卡片中确认后执行 |
 | `~/.codex/sessions/**/rollout-*.jsonl` 里的 `token_count` 事件 | **实时**：CLI / `codex exec` 会话每轮响应后的限速信息，与 Codex App 显示的完全一致 | 每 1 秒 tail 一次（只读最近 15 分钟内有写入文件的新增字节；每 10 秒遍历一次所有日期目录，因为长期线程的文件在它创建那天的目录下） |
 | `$CODEX_HOME/logs_*.sqlite` 里的 `account/rateLimits/updated` 行 | **触发器**：桌面端线程不再写 rollout，但 app-server 每次限速更新都会记一行日志，看到就立刻拉接口 | 每 1 秒查一次（走索引，约 20 ms） |
 
@@ -345,7 +347,7 @@ Codex Monitor 不会按计划刷新 token，也从不改写一份*还能用*的 
 
 - 你的操作：「切换」「存为账号」「刷新 Token…」「重新登录…」；
 - 单向「回流」复制：把 Codex 自己刚刷新过的 `~/.codex/auth.json` 复制进对应账号目录（不涉及网络）；
-- **401 后的自动刷新**：服务端拒绝 access token（或它已过期）时，用 refresh_token 换新一次（**每账号每 10 分钟最多一次**）并重试——这正是 Codex 遇到 401 时的做法。被拒绝的 token 在任何机器上都已经没用了，所以这一步不可能破坏别处的副本；没有它，被作废的会话会永远显示旧数据（比如套餐徽章卡在旧值）。可关闭：悬窗菜单「Token 被拒绝(401)时自动刷新一次」、`codex-monitor serve --no-auto-refresh`，或环境变量 `CODEX_MONITOR_NO_AUTO_REFRESH=1`。如果刷新本身也失败，卡片会提示会话已作废并给出「重新登录」。
+- **401 后的自动刷新**：服务端拒绝 access token（或它已过期）时，用 refresh_token 换新一次（**每账号每 10 分钟最多一次**）并重试——这正是 Codex 遇到 401 时的做法。刷新可能使其他机器上未同步的旧 refresh_token 失效；匹配的本地会话副本会同步更新。没有它，被作废的会话会永远显示旧数据（比如套餐徽章卡在旧值）。可关闭：悬窗菜单「Token 被拒绝(401)时自动刷新一次」、`codex-monitor serve --no-auto-refresh`，或环境变量 `CODEX_MONITOR_NO_AUTO_REFRESH=1`。如果刷新本身也失败，卡片会提示会话已作废并给出「重新登录」。
 
 **两套实现，一种行为。** Swift 悬窗和 Python 包实现的是同一套目录布局、同样的接口调用、同样的 rollout tail 和同样的 OAuth 流程，`tests/` 里都有覆盖。代理：Python 端支持 `HTTPS_PROXY`/`HTTP_PROXY`、macOS 系统代理（`scutil --proxy`）和 Windows 注册表代理；悬窗通过 URLSession 使用系统代理。
 
@@ -364,7 +366,8 @@ Codex Monitor 不会按计划刷新 token，也从不改写一份*还能用*的 
 
 ```
 codex_monitor/          Python 包（仅标准库，3.8+）：账号存储、用量接口 + rollout tail、OAuth、网页仪表盘、开机自启
-  web.py / web_i18n.py  仪表盘（单页 HTML，中英双语）
+  web.py / web_i18n.py  HTTP 接口与中英翻译
+  web_static/           仪表盘 HTML、CSS 和 JavaScript（打包后内联，无 CDN）
 bin/codex-monitor       克隆后直接运行命令行（bin/codex-acct 是同一个东西）
 Sources/CodexMonitor/   Swift（SwiftUI + AppKit）原生悬窗；Strings*.swift 是全部文案
 scripts/build.sh        swiftc 编译 + ad-hoc 签名；scripts/install.sh / uninstall.sh
@@ -375,6 +378,10 @@ tests/test_removal.py   单个重复存档删除、恢复、失效选择/路径�
 tests/test_rename.py    重命名持久化、凭证/标签/历史保留、重名阻止、失败回滚、中文导出和认证接口
 tests/check_web_ui.mjs  Chrome 实测：多列/小屏、深浅色、中英文、标签编辑与搜索（Node 24，无 npm 依赖）
 tests/linux_smoke.sh    Docker 检查：Linux 安装脚本、已安装服务重启/标签保留、自启
+tests/test_reset_credits.py  重置卡请求格式、确认、重复/并发保护与额度刷新（伪造响应）
+tests/test_web_regressions.py  导入校验、刷新身份/并发保护、登录完成、别名同步、OAuth 转义及禁止凭证缓存
+tests/test_recovery.py     登录取消与暂存保护、额度更新顺序、凭证副本同步、异常响应及重置请求持久化恢复
+tests/test_web_ui.cjs   可选 Playwright 浏览器测试：菜单可见性、凭证过期和重新登录
 tests/run_store_tests.sh  Swift 测试（macOS）
 tests/run_annotations_tests.sh  原生标签校验、Swift/Python 互读和并发保存（macOS）
 ```
@@ -382,6 +389,10 @@ tests/run_annotations_tests.sh  原生标签校验、Swift/Python 互读和并�
 ```bash
 python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py && python3 tests/test_removal.py && python3 tests/test_rename.py
 node tests/check_web_ui.mjs                                        # Node 24 + Chrome；CHROME_BIN 可指定浏览器
+python3 tests/test_web_regressions.py
+python3 tests/test_reset_credits.py                                  # 不消耗真实重置卡
+python3 tests/test_recovery.py
+node tests/test_web_ui.cjs                                           # 需要 Playwright 和 Chromium；可指定 PLAYWRIGHT_MODULE=/path/to/playwright-core
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS，Swift 端
 bash tests/run_annotations_tests.sh                                    # macOS，两端标签互读/并发保存
@@ -395,11 +406,15 @@ Swift 构建放在 `~/Library/Caches/CodexMonitor/build`：iCloud 同步的目�
 
 ## 9. ❓ 常见问题
 
-**某个账号显示的是旧套餐 / 旧数字。** 它的 token 很可能被拒绝了（401）；如果关闭了自动刷新，或 refresh_token 也被作废，就拿不到新数据——黄点和「显示的是缓存数据」就是这个意思。打开自动刷新，或对该账号用「重新登录…」。
+**如何使用重置卡？** 网页账号卡片的「重置次数」旁有「使用重置卡」按钮，确认后消耗一张适用的卡，并更新额度和剩余卡数。凭证过期时需先刷新 Token 或重新登录。超时导致结果不确定时，点击「核对重置结果」重试同一次操作；刷新页面后仍可核对，避免额外消耗一张卡。
+
+**重置卡恢复：**待确认的操作编号和已确认结果独立保存在 `~/.codex-accounts/_reset_requests/`（可由 `CODEX_ACCOUNTS_DIR` 指定根目录）。超时、重启服务或打开新标签页后，请使用“核对重置结果”重试同一个操作；结果不明确时会阻止该账号发起新的使用请求。结果未确认前不要删除恢复记录。
+
+**某个账号显示的是旧套餐 / 旧数字。** 它的 token 很可能被拒绝了（401）；如果关闭了自动刷新，或 refresh_token 也被作废，就拿不到新数据——黄点和「显示的是缓存数据」就是这个意思。网页中的过期账号会直接显示「刷新 Token」和「重新登录」按钮，⋯ 账号菜单中也能找到。刷新失败时，弹窗可直接进入浏览器重新登录或导入最新的 `auth.json`。
 
 **订阅周期和我刚买的不一致。** 这个字段是*账号登录那一刻的快照*（id_token 里的 `chatgpt_subscription_last_checked`）。token 刷新不会重新核验它，Codex 的 token 也访问不到任何返回实时账期的接口，所以卡片把它标为「登录时快照」并显示核验时间；*套餐*徽章则是接口实时的。想刷新快照，对该账号「重新登录」。
 
-**「登录凭证（自动续期）至 …」是账号要到期了吗？** 不是。access token 有效期 10 天，Codex（以及监控在 401 后）会自动续期；这一行只说明当前凭证的新旧。只有 token 真的过期且续期失败时才会变红。
+**「登录凭证（自动续期）至 …」是账号要到期了吗？** 这里显示的是当前 access token 的真实有效期，来自 Token 的签名内容。Codex 和监控可以使用有效的 refresh token 续期。有效期由 OpenAI 决定，导入或编辑 `auth.json` 无法延长为一年；refresh token 已过期或被撤销时，需要重新登录。
 
 **设备码页面提示要开启设备代码授权。** 到该账号的 ChatGPT → 设置 → 安全 里打开，或者直接用默认的浏览器登录。
 
