@@ -1,4 +1,4 @@
-"""`CODEX_MONITOR_DEMO=1`: fabricated accounts for screenshots and UI work. No network, no files."""
+"""Fabricated quota data with no network calls. Tags use the configured account directory."""
 from __future__ import annotations
 
 import base64

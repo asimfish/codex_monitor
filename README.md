@@ -354,7 +354,7 @@ node tests/check_web_ui.mjs                                        # Node 24 + C
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS, Swift side
 tar --exclude=.git -c . | docker run --rm -i python:3.8-slim bash -c 'mkdir /src && tar -x -C /src && bash /src/tests/linux_smoke.sh'
-CODEX_MONITOR_DEMO=1 codex-monitor serve                               # dashboard with fabricated accounts, no network
+CODEX_MONITOR_DEMO=1 CODEX_HOME="$(mktemp -d)" CODEX_ACCOUNTS_DIR="$(mktemp -d)" codex-monitor serve  # isolated demo accounts and tags
 CODEX_MONITOR_DEMO=1 CODEX_MONITOR_SNAPSHOT=/tmp/panel.png ~/Applications/CodexMonitor.app/Contents/MacOS/CodexMonitor   # widget → PNG
 CODEX_MONITOR_TEST_LOGIN=browser ~/Applications/CodexMonitor.app/Contents/MacOS/CodexMonitor   # widget OAuth self-test
 ```
