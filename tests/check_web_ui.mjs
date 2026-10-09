@@ -44,7 +44,7 @@ try {
   const port = await until(async () => {
     if (chrome.exitCode !== null) throw new Error('Chrome failed: ' + chromeErrors.slice(-1000));
     return readFile(join(directory, 'DevToolsActivePort'), 'utf8').then(value => value.split('\n')[0]).catch(() => null);
-  }, 'Chrome debug port');
+  }, 'Chrome debug port').catch(error => { throw new Error(error.message + '\nChrome stderr:\n' + chromeErrors.slice(-8000)); });
   const page = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {method: 'PUT'})).json();
   socket = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((done, reject) => { socket.addEventListener('open', done, {once: true}); socket.addEventListener('error', reject, {once: true}); });
