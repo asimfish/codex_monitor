@@ -16,8 +16,8 @@ const python = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 
 let chrome, fixture, socket;
 const errors = [];
 const delay = ms => new Promise(done => setTimeout(done, ms));
-const until = async (test, label) => {
-  for (let i = 0; i < 100; i++) { const value = await test(); if (value) return value; await delay(100); }
+const until = async (test, label, attempts = 100) => {
+  for (let i = 0; i < attempts; i++) { const value = await test(); if (value) return value; await delay(100); }
   throw new Error('Timed out: ' + label);
 };
 const stop = async child => {
@@ -44,7 +44,7 @@ try {
   const port = await until(async () => {
     if (chrome.exitCode !== null) throw new Error('Chrome failed: ' + chromeErrors.slice(-1000));
     return readFile(join(directory, 'DevToolsActivePort'), 'utf8').then(value => value.split('\n')[0]).catch(() => null);
-  }, 'Chrome debug port').catch(error => { throw new Error(error.message + '\nChrome stderr:\n' + chromeErrors.slice(-8000)); });
+  }, 'Chrome debug port', 300).catch(error => { throw new Error(error.message + '\nChrome stderr:\n' + chromeErrors.slice(-8000)); });
   const page = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {method: 'PUT'})).json();
   socket = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((done, reject) => { socket.addEventListener('open', done, {once: true}); socket.addEventListener('error', reject, {once: true}); });
@@ -83,13 +83,20 @@ try {
   for (const label of ['重置次数', '订阅到期', '凭证有效期', '余额', '12.50', 'Code review', 'GPT-5.3-Codex-Spark']) assert.ok(text.includes(label), 'Missing detail: ' + label);
   assert.match(await evaluate(alice + ".querySelector('.reset-at').innerText"), /\d{4}\/\d{2}\/\d{2}/);
   await screenshot('dashboard-zh.png');
-  for (const [width, columns] of [[1440, 3], [1000, 2], [390, 1], [320, 1]]) {
-    await call('Emulation.setDeviceMetricsOverride', {width, height: 1100, deviceScaleFactor: 1, mobile: false});
-    const layout = await evaluate("({width:innerWidth,scroll:document.documentElement.scrollWidth,columns:getComputedStyle(document.getElementById('accounts')).gridTemplateColumns.split(' ').length})");
-    assert.equal(layout.scroll, layout.width, 'Horizontal overflow at ' + width);
-    assert.equal(layout.columns, columns, 'Columns at ' + width);
-    if (width === 390) await screenshot('dashboard-mobile-zh.png');
+  for (const scrollbar of ['default', 'classic']) {
+    if (scrollbar === 'classic') {
+      await evaluate("const style=document.createElement('style');style.id='classic-scrollbar-test';style.textContent='html::-webkit-scrollbar{width:15px}';document.head.appendChild(style)");
+    }
+    for (const [width, columns] of [[1440, 3], [1000, 2], [390, 1], [320, 1]]) {
+      await call('Emulation.setDeviceMetricsOverride', {width, height: 1100, deviceScaleFactor: 1, mobile: false});
+      // clientWidth excludes a classic scrollbar; innerWidth includes its gutter.
+      const layout = await evaluate("({width:document.documentElement.clientWidth,scroll:document.documentElement.scrollWidth,columns:getComputedStyle(document.getElementById('accounts')).gridTemplateColumns.split(' ').length})");
+      assert.equal(layout.scroll, layout.width, 'Horizontal overflow at ' + width + ' (' + scrollbar + ')');
+      assert.equal(layout.columns, columns, 'Columns at ' + width);
+      if (width === 390 && scrollbar === 'default') await screenshot('dashboard-mobile-zh.png');
+    }
   }
+  await evaluate("document.getElementById('classic-scrollbar-test').remove()");
   await call('Emulation.setDeviceMetricsOverride', {width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false});
   await call('Emulation.setEmulatedMedia', {features: [{name: 'prefers-color-scheme', value: 'dark'}]});
   await delay(200);
