@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from codex_monitor import demo, oauth, paths, store, usage
 from codex_monitor.identity import identity, now_utc
+from codex_monitor.locking import file_lock
 from codex_monitor.monitor import Monitor
 from codex_monitor.reset_ledger import ResetLedger
 
@@ -395,6 +396,31 @@ with patch.object(usage,'consume_reset_credit',side_effect=AssertionError('secon
 
         with patch.object(usage, "consume_reset_credit", side_effect=consume), patch.object(self.m, "refresh_one"):
             self.m.use_reset_credit("profile", request_id)
+
+    def test_moving_locked_profile_preserves_credentials_and_process_lock(self):
+        destination = self.auth_path.parent.with_name("moved")
+        script = """
+import sys
+from pathlib import Path
+from codex_monitor.locking import LockBusyError, file_lock
+try:
+    with file_lock(Path(sys.argv[1]), blocking=False): print('acquired')
+except LockBusyError: print('blocked')
+"""
+        def probe():
+            child = subprocess.run([sys.executable, "-c", script, str(destination / ".auth.lock")],
+                                   cwd=str(Path(__file__).resolve().parent.parent),
+                                   capture_output=True, text=True, timeout=10)
+            self.assertEqual(child.returncode, 0, child.stderr)
+            return child.stdout.strip()
+
+        original = self.auth_path.read_bytes()
+        with file_lock(self.auth_path.parent / ".auth.lock"):
+            self.auth_path.parent.rename(destination)
+            self.assertEqual((destination / "auth.json").read_bytes(), original)
+            self.assertEqual(probe(), "blocked")
+        self.assertFalse(self.auth_path.parent.exists())
+        self.assertEqual(probe(), "acquired")
 
     def test_persistence_failure_prevents_network_spend(self):
         with patch("codex_monitor.reset_ledger.atomic_write", side_effect=OSError("fixture disk full")), patch.object(usage, "consume_reset_credit") as consume:

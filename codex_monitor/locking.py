@@ -16,6 +16,40 @@ _locks = {}
 _local = threading.local()
 
 
+def _open_lock(path: Path):
+    if os.name != "nt":
+        return path.open("a+b")
+
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    create_file = kernel32.CreateFileW
+    create_file.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                            wintypes.LPVOID, wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    create_file.restype = wintypes.HANDLE
+    # FILE_SHARE_DELETE lets an account move to its backup while this lock is held.
+    # The byte-range lock below still serializes competing writers.
+    read_write, share_read_write_delete = 0xC0000000, 0x7
+    open_always, normal = 4, 0x80
+    handle = create_file(str(path), read_write, share_read_write_delete, None, open_always, normal, None)
+    if handle == wintypes.HANDLE(-1).value:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        fd = msvcrt.open_osfhandle(handle, os.O_APPEND | os.O_BINARY | os.O_NOINHERIT)
+    except BaseException:
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes, close_handle.restype = [wintypes.HANDLE], wintypes.BOOL
+        close_handle(handle)
+        raise
+    try:
+        return os.fdopen(fd, "a+b")
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 @contextmanager
 def file_lock(path: Path, blocking: bool = True):
     key = str(path.resolve())
@@ -30,7 +64,7 @@ def file_lock(path: Path, blocking: bool = True):
         if key in held:
             yield
             return
-        with path.open("a+b") as handle:
+        with _open_lock(path) as handle:
             os.chmod(path, 0o600)
             if os.name == "nt":
                 import msvcrt
