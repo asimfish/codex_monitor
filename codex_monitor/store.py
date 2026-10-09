@@ -2,6 +2,7 @@
 ~/.codex-accounts. Every directory doubles as an isolated CODEX_HOME."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -91,11 +92,24 @@ def sanitize(name: str) -> str:
     return keep
 
 
+def auth_lock(path: Path, blocking: bool = True):
+    """Keep archive locks outside movable account directories, including on Windows."""
+    canonical = path.resolve()
+    if canonical.parent.parent == paths.accounts_dir().resolve():
+        root = canonical.parent.parent / "_auth_locks"
+        root.mkdir(mode=0o700, exist_ok=True)
+        key = hashlib.sha256(os.path.normcase(str(canonical)).encode("utf-8")).hexdigest()
+        lock_path = root / (key + ".lock")
+    else:
+        lock_path = canonical.parent / ".auth.lock"
+    return file_lock(lock_path, blocking=blocking)
+
+
 def atomic_write(path: Path, data: bytes, create_parent: bool = True, durable: bool = False) -> None:
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
     # Refresh's read/check/write and every application credential writer share this lock.
-    with file_lock(path.parent / ".auth.lock") if path.name == "auth.json" else nullcontext():
+    with auth_lock(path) if path.name == "auth.json" else nullcontext():
         fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=str(path.parent))
         try:
             with os.fdopen(fd, "wb") as f:
@@ -219,7 +233,7 @@ def adopt() -> Optional[str]:
         if timestamp and timestamp > m_ts:
             continue
         try:
-            with file_lock(profile.directory / ".auth.lock"):
+            with auth_lock(profile.auth_path):
                 # Re-read inside the writer lock so an intervening import is preserved.
                 if read_json(profile.auth_path) != profile.auth:
                     continue

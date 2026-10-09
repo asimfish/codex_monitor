@@ -28,8 +28,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 from . import net, paths
 from .identity import access_token_expired, format_iso, identity, jwt_claims, now_utc
-from .locking import file_lock
-from .store import atomic_write
+from .store import atomic_write, auth_lock
 
 
 class OAuthError(Exception):
@@ -136,7 +135,7 @@ def build_auth_json(tokens: dict, now: Optional[datetime] = None) -> bytes:
 def apply_refreshed(auth_path: Path, new_tokens: dict, expected_refresh_token: Optional[str] = None,
                     expected_account_id: Optional[str] = None) -> bool:
     """Merge refreshed tokens into an existing auth.json, preserving unknown keys."""
-    with file_lock(auth_path.parent / ".auth.lock"):
+    with auth_lock(auth_path):
         with open(auth_path, "r", encoding="utf-8") as f:
             root = json.load(f)
         if expected_account_id is not None and identity(root).get("account_id") != expected_account_id:
