@@ -16,6 +16,7 @@ jobs:
           python-version: '3.11'
       - run: python tests/test_python.py
       - run: python tests/test_cli.py
+      - run: python tests/test_dashboard.py
       - run: python -m pip install .
       - run: codex-monitor --help
       - name: Verify Linux installer and isolated command
@@ -24,14 +25,14 @@ jobs:
           bash scripts/install-linux.sh
           "$HOME/.local/share/codex-monitor/venv/bin/codex-monitor" --help
           test -L "$HOME/.local/bin/codex-monitor"
-          CODEX_MONITOR_DEMO=1 "$HOME/.local/share/codex-monitor/venv/bin/codex-monitor" serve --no-browser --port 7861 >/tmp/codex-monitor-linux.log 2>&1 &
-          pid=$!
-          trap 'kill "$pid" 2>/dev/null || true' EXIT
-          for _ in $(seq 1 20); do grep -q 'dashboard: http://' /tmp/codex-monitor-linux.log && break; sleep 0.25; done
-          url=$(sed -n 's/^Codex Monitor dashboard: //p' /tmp/codex-monitor-linux.log | tail -1)
-          test -n "$url"
-          curl --fail --silent "$url" >/tmp/codex-monitor-linux.html
-          grep -q 'account-grid' /tmp/codex-monitor-linux.html
+          python tests/check_installed_dashboard.py "$HOME/.local/share/codex-monitor/venv/bin/codex-monitor"
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Linux'
+        with:
+          node-version: '24'
+      - name: Verify real browser layout and tag interactions
+        if: runner.os == 'Linux'
+        run: SCREENSHOT_DIR=/tmp/dashboard-screenshots node tests/check_web_ui.mjs
   macos:
     runs-on: macos-14
     steps:

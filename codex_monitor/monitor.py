@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from . import __version__, browsers, paths, store, usage
+from .annotations import Annotations, account_order, availability
 from .identity import fmt_local, identity, now_utc, to_json_value
 from .oauth import BrowserLogin, DeviceCodeLogin, OAuthError, apply_refreshed, refresh_tokens
 from .store import StoreError
@@ -41,6 +42,7 @@ class Monitor:
         self.login_name: Optional[str] = None
         self.login_mode: Optional[str] = None
         self.login_relogin = False
+        self.annotations = Annotations(paths.accounts_dir())
 
     # ------------------------------------------------------------ logging
 
@@ -379,10 +381,39 @@ class Monitor:
 
     # ------------------------------------------------------------ snapshot
 
+    def _annotation_key(self, name: str) -> str:
+        state = self.states[name]
+        # A main-only login can change identity; stored profiles keep their labels on re-login.
+        return "main:" + state.ident.get("account_id", "") if state.is_main else "profile:" + name
+
+    def set_annotations(self, name: object, tags: object, unavailable: object) -> dict:
+        with self.lock:
+            if not isinstance(name, str) or name not in self.states:
+                raise StoreError("Unknown account for tags")
+            return self.annotations.save(self._annotation_key(name), tags, unavailable)
+
     def snapshot(self) -> dict:
         now = now_utc()
         with self.lock:
-            accounts = [self.states[n].view(now) for n in self.order]
+            annotation_error = None
+            try:
+                annotations = self.annotations.read()
+            except StoreError as error:
+                annotations = {}
+                annotation_error = str(error)
+            accounts = []
+            for name in self.order:
+                state = self.states[name]
+                account = state.view(now)
+                labels = annotations.get(self._annotation_key(name))
+                if labels is None:
+                    labels = annotations.get("main:" + state.ident.get("account_id", ""), {"tags": [], "unavailable": False})
+                account["tags"] = labels["tags"]
+                account["manual_unavailable"] = labels["unavailable"]
+                account["availability"] = availability(account, state.ident.get("has_tokens", False))
+                account["has_tokens"] = state.ident.get("has_tokens", False)
+                accounts.append(account)
+            accounts.sort(key=account_order)
             data = {
                 "version": __version__,
                 "now": now,
@@ -395,5 +426,6 @@ class Monitor:
                 "accounts": accounts,
                 "login": self.login_status(),
                 "log": list(self.log),
+                "annotation_error": annotation_error,
             }
         return to_json_value(data)

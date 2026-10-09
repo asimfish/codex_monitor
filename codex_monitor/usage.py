@@ -436,6 +436,7 @@ class AccountState:
         rate_limit = self.live.as_rate_limit() if live and self.live else (self.usage or {}).get("rate_limit")
         windows = windows_of(rate_limit, now)
         extras = []
+        seen = set()
         for x in (self.usage or {}).get("additional_rate_limits") or []:
             rl = x.get("rate_limit")
             key = x.get("metered_feature")
@@ -443,6 +444,11 @@ class AccountState:
             if lx and (not self.fetched_at or lx.timestamp > self.fetched_at):
                 rl = lx.as_rate_limit()
             extras.append({"name": x.get("limit_name") or key or "other", "windows": windows_of(rl, now)})
+            if key:
+                seen.add(key)
+        for key, event in self.live_extras.items():
+            if key not in seen:
+                extras.append({"name": event.limit_name or key, "windows": windows_of(event.as_rate_limit(), now)})
         reset_credits = None
         if self.credits and self.credits.get("available_count") is not None:
             reset_credits = self.credits["available_count"]
