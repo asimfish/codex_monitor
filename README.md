@@ -169,6 +169,20 @@ codex-monitor autostart install   # start it at login: LaunchAgent / systemd use
 
 The dashboard shows what `~/.codex/auth.json` is logged in as. **Add account** → name it → **Open in … private window** → sign in with the other ChatGPT account → the page redirects to `localhost:1455` and the new account appears. Everything else (switch, copy/export `auth.json`, re-login) is a button on the card.
 
+Accounts with remaining quota, valid credentials and no request error appear first, followed by unconfirmed, exhausted and invalid accounts. An invalid current login does not take the first position. Within each availability group, the current account comes first, then accounts with more remaining quota. The responsive grid shows 2–4 columns on desktop and one on small screens. Cards include all quota windows and additional limits, reset countdowns and dates, reset credits and their expiry, credit balance when supplied, subscription snapshots, credential expiry and last refresh. Status filters, search and dark mode are included.
+
+**Custom red tags (web dashboard):** click **+ Add tag** on a card, type a note such as “Account deleted” or “Cannot use”, press Enter or **Add tag**, then **Save**. Each account allows up to 8 tags of 30 characters each. Reopen the editor to remove tags with `×`; search also matches tags. Optionally check **Mark unavailable and place at the end** to move a known unusable account behind the others. Uncheck and save to restore automatic sorting. Tag text alone does not change availability.
+
+Tags are stored in `~/.codex-accounts/_annotations.json` (under `CODEX_ACCOUNTS_DIR` when overridden). They survive refresh, restart and re-login to the same profile name; tag edits never modify `auth.json`. Keep unusable profiles in the list and label or re-login to them instead of deleting their directories.
+
+<p align="center"><img src="docs/screenshots/dashboard-zh.png" alt="Usable-first multicolumn dashboard with fabricated accounts" width="1000"></p>
+
+<details><summary>Tag editor example (fabricated account)</summary>
+
+<img src="docs/screenshots/dashboard-tags-zh.png" alt="Edit red tags and optionally mark an account unavailable" width="480">
+
+</details>
+
 The same things from the terminal:
 
 ```bash
@@ -202,7 +216,7 @@ codex-monitor export work ~/Desktop/   # copy an auth.json out for another machi
 
 ### Linux installation
 
-The web dashboard supports Linux, with a responsive two-column layout, account search, status overview and dark mode. No macOS app is required.
+The web dashboard supports Linux, with a responsive 2–4 column layout, usable-first sorting, tag search, status overview and dark mode. No macOS app is required.
 
 ```bash
 # Debian / Ubuntu prerequisites
@@ -326,14 +340,17 @@ codex_monitor/          Python package (stdlib only, 3.8+): store, usage API + r
 bin/codex-monitor       run the CLI straight from a checkout (bin/codex-acct is the same thing)
 Sources/CodexMonitor/   Swift (SwiftUI + AppKit) native widget; Strings*.swift hold all its text
 scripts/build.sh        swiftc build + ad-hoc codesign;  scripts/install.sh / uninstall.sh
-tests/test_python.py    22 unit/integration tests: parsing, tailer, views, OAuth (fake callback), auto-refresh on 401, app-server log trigger, web API, simulated Windows branches
+tests/test_python.py    parsing, tailer, views, OAuth (fake callback), auto-refresh on 401, app-server log trigger, web API, simulated Windows branches
 tests/test_cli.py       sandboxed end-to-end test of the CLI (temp CODEX_HOME, fake JWTs, no network)
-tests/linux_smoke.sh    what the Docker check runs: tests + pip install + dashboard boot + autostart on Linux
+tests/test_dashboard.py sorting, persistent/validated tags, authenticated API and additional quota
+tests/check_web_ui.mjs  real Chrome layout, light/dark, EN/ZH, tag editing/search (Node 24, no npm dependencies)
+tests/linux_smoke.sh    Linux installer, installed dashboard restart/tag persistence and autostart checks
 tests/run_store_tests.sh  Swift tests (macOS)
 ```
 
 ```bash
-python3 tests/test_python.py && python3 tests/test_cli.py            # any OS
+python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py
+node tests/check_web_ui.mjs                                        # Node 24 + Chrome; override with CHROME_BIN
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS, Swift side
 tar --exclude=.git -c . | docker run --rm -i python:3.8-slim bash -c 'mkdir /src && tar -x -C /src && bash /src/tests/linux_smoke.sh'

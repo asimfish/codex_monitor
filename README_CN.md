@@ -167,6 +167,20 @@ codex-monitor autostart install   # 开机自启：LaunchAgent / systemd 用户�
 
 仪表盘显示 `~/.codex/auth.json` 当前登录的账号。**添加账号** → 起名 → **用 … 隐身窗口打开** → 用另一个 ChatGPT 账号登录 → 页面跳回 `localhost:1455`，新账号出现。切换、复制/导出 `auth.json`、重新登录都是卡片上的按钮。
 
+网页默认优先展示**有额度、凭证未过期、请求正常**的账号，再显示待确认、额度耗尽、登录失效的账号；正在使用但已失效的账号也会靠后。同一可用性分组内优先显示使用中的账号，再按最低剩余额度从高到低排列。宽屏按窗口宽度显示 2–4 列，小屏单列。卡片显示每个额度窗口的百分比、重置倒计时和具体时间，额外额度、重置次数及到期时间、余额（接口提供时）、订阅快照、凭证有效期和最后刷新时间；支持状态筛选、搜索与深色模式。
+
+**自定义红色标签（网页版）：**点卡片底部 **+ 添加标签** → 输入如“账号被删除”“未删除但用不了” → 回车或点 **添加标签** → **保存**。每个账号最多 8 个标签，每个最多 30 字；再次打开可点 `×` 删除，也能在搜索框中搜索标签。如果你已确认账号不能用，可同时勾选 **标记为不可用，排到最后**；取消勾选并保存可恢复自动排序。普通标签只作备注，不会自动改变账号状态。
+
+标签保存在账号目录根部的 `~/.codex-accounts/_annotations.json`（设置 `CODEX_ACCOUNTS_DIR` 时随之改变），刷新、重启及同名账号重新登录后保留，编辑标签不会改动 `auth.json`。不要为标记失效账号直接删除账号目录；保持账号在列表中，再加标签或重新登录即可。
+
+<p align="center"><img src="docs/screenshots/dashboard-zh.png" alt="可用账号优先的多列网页看板；截图使用模拟账号" width="1000"></p>
+
+<details><summary>标签编辑示例（模拟账号）</summary>
+
+<img src="docs/screenshots/dashboard-tags-zh.png" alt="编辑红色标签并手动标记不可用" width="480">
+
+</details>
+
 同样的事在终端里：
 
 ```bash
@@ -200,7 +214,7 @@ codex-monitor export work ~/Desktop/   # 拷一份 auth.json 给别的机器
 
 ### Linux 安装与启动
 
-网页版支持 Linux，不依赖 macOS 原生窗口。桌面宽屏显示双列账号卡片，小屏自动单列，支持搜索账号、深色模式和账号状态概览。
+网页版支持 Linux，不依赖 macOS 原生窗口。桌面宽屏显示 2–4 列账号卡片，小屏自动单列，支持可用账号优先排序、搜索标签、深色模式和账号状态概览。
 
 ```bash
 # Debian / Ubuntu 首次使用先安装 Python 环境
@@ -325,14 +339,17 @@ codex_monitor/          Python 包（仅标准库，3.8+）：账号存储、用
 bin/codex-monitor       克隆后直接运行命令行（bin/codex-acct 是同一个东西）
 Sources/CodexMonitor/   Swift（SwiftUI + AppKit）原生悬窗；Strings*.swift 是全部文案
 scripts/build.sh        swiftc 编译 + ad-hoc 签名；scripts/install.sh / uninstall.sh
-tests/test_python.py    22 个单元/集成测试：解析、tail、视图、OAuth（伪造回调）、401 自动刷新、app-server 日志触发器、Web API、模拟的 Windows 分支
+tests/test_python.py    解析、tail、视图、OAuth（伪造回调）、401 自动刷新、app-server 日志触发器、Web API、模拟的 Windows 分支
 tests/test_cli.py       命令行沙盒端到端测试（临时 CODEX_HOME、伪造 JWT、不联网）
-tests/linux_smoke.sh    Docker 检查跑的脚本：测试 + pip 安装 + 仪表盘启动 + Linux 自启
+tests/test_dashboard.py 排序、标签持久化/校验、认证接口、额外额度（临时目录、模拟账号）
+tests/check_web_ui.mjs  Chrome 实测：多列/小屏、深浅色、中英文、标签编辑与搜索（Node 24，无 npm 依赖）
+tests/linux_smoke.sh    Docker 检查：Linux 安装脚本、已安装服务重启/标签保留、自启
 tests/run_store_tests.sh  Swift 测试（macOS）
 ```
 
 ```bash
-python3 tests/test_python.py && python3 tests/test_cli.py            # 任意系统
+python3 tests/test_python.py && python3 tests/test_cli.py && python3 tests/test_dashboard.py
+node tests/check_web_ui.mjs                                        # Node 24 + Chrome；CHROME_BIN 可指定浏览器
 bash tests/run_account_order_tests.sh                                  # account ordering
 ./tests/run_store_tests.sh                                             # macOS，Swift 端
 tar --exclude=.git -c . | docker run --rm -i python:3.8-slim bash -c 'mkdir /src && tar -x -C /src && bash /src/tests/linux_smoke.sh'
