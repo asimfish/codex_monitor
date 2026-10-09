@@ -32,7 +32,8 @@ os.environ.pop("CODEX_MONITOR_DEMO", None)
 
 from codex_monitor import autostart, browsers, identity, oauth, paths, store, usage  # noqa: E402
 from codex_monitor.monitor import Monitor  # noqa: E402
-from codex_monitor.web import make_server  # noqa: E402
+from codex_monitor.web import TokenSpecError, make_server, resolve_dashboard_token  # noqa: E402
+from codex_monitor.web_i18n import EN, ZH  # noqa: E402
 
 
 def b64(obj) -> str:
@@ -370,7 +371,89 @@ class StoreAndWebTests(unittest.TestCase):
             import shutil
             shutil.rmtree(directory)
 
+    def test_cancel_login_returns_idle_so_add_form_is_reusable(self):
+        class Flow:
+            phase = "waiting"
+            error = None
+            url = "https://example.test/oauth"
+            result_identity = None
+
+            def start(self):
+                return None
+
+            def cancel(self):
+                self.phase = "cancelled"
+
+        monitor = Monitor()
+        first = Flow()
+        with patch("codex_monitor.monitor.BrowserLogin", return_value=first):
+            self.assertEqual(monitor.start_login("probe")["phase"], "waiting")
+        self.assertEqual(monitor.login_status()["phase"], "waiting")
+        monitor.cancel_login()
+        self.assertEqual(monitor.login_status()["phase"], "idle")
+        leftover = Flow()
+        leftover.phase = "cancelled"
+        monitor.login, monitor.login_name = leftover, "old"
+        second = Flow()
+        with patch("codex_monitor.monitor.BrowserLogin", return_value=second):
+            status = monitor.start_login("fresh")
+        self.assertEqual(status["phase"], "waiting")
+        self.assertEqual(status["name"], "fresh")
+        monitor.cancel_login()
+        self.assertEqual(monitor.login_status()["phase"], "idle")
+
+    def test_remove_sanitizes_and_leaves_main_alone(self):
+        now = datetime.now(timezone.utc)
+        write(paths.accounts_dir() / "to-del" / "auth.json",
+              make_auth("d@example.com", "dddddddd-0000-0000-0000-00000000000d", now))
+        main_before = paths.main_auth_path().read_bytes()
+        with self.assertRaises(store.StoreError):
+            store.remove("../to-del")
+        backup = store.remove("to-del")
+        self.assertTrue((backup / "auth.json").is_file())
+        with self.assertRaises(store.StoreError):
+            store.get_profile("to-del")
+        self.assertEqual(paths.main_auth_path().read_bytes(), main_before)
+        with self.assertRaises(store.StoreError):
+            store.remove("nope")
+
+    def test_browser_login_names_port_holder_when_bind_fails(self):
+        from codex_monitor.oauth import BrowserLogin
+        with patch("codex_monitor.oauth.CallbackServer", side_effect=OSError("Address already in use")):
+            with patch("codex_monitor.oauth.describe_loopback_listener", return_value="codex app-server (pid 1)"):
+                flow = BrowserLogin(SANDBOX / "busy-login")
+                flow.start()
+        self.assertEqual(flow.phase, "failed")
+        self.assertIn("codex app-server (pid 1)", flow.error)
+        self.assertIn("device-code", flow.error)
+
+    def test_describe_loopback_listener_finds_our_server(self):
+        server = oauth.CallbackServer(0)
+        port = server.server_address[1]
+        server.start()
+        try:
+            desc = oauth.describe_loopback_listener(port)
+            if desc is None:
+                self.skipTest("loopback listener not visible in /proc/net/tcp")
+            self.assertIn(str(os.getpid()), desc)
+        finally:
+            server.stop()
+
+    def test_callback_server_stop_unblocks_wait(self):
+        server = oauth.CallbackServer(0)
+        server.start()
+        try:
+            started = time.time()
+            threading.Thread(target=lambda: (time.sleep(0.05), server.stop()), daemon=True).start()
+            self.assertIsNone(server.wait(timeout=2))
+            self.assertLess(time.time() - started, 1.5)
+        finally:
+            server.stop()
+
     def test_adopt_and_activate(self):
+        now = datetime.now(timezone.utc)
+        write(paths.main_auth_path(), make_auth("a@example.com", self.acct_a, now))
+        write(paths.accounts_dir() / "a" / "auth.json", make_auth("a@example.com", self.acct_a, now - timedelta(hours=3)))
         msg = store.adopt()
         self.assertIsNotNone(msg)
         self.assertEqual((paths.accounts_dir() / "a" / "auth.json").read_bytes(), paths.main_auth_path().read_bytes())
@@ -382,6 +465,20 @@ class StoreAndWebTests(unittest.TestCase):
         self.assertEqual(store.main_profile().account_id, self.acct_a)
         with self.assertRaises(store.StoreError):
             store.get_profile("nope")
+        self.assertEqual(store.get_profile("../a").directory, paths.accounts_dir() / "a")
+        exported = store.export("../a", SANDBOX)
+        self.assertEqual(exported.name, "auth-a.json")
+        self.assertEqual(exported.parent, SANDBOX)
+        self.assertEqual(exported.read_bytes(), (paths.accounts_dir() / "a" / "auth.json").read_bytes())
+        weird_id = "dddddddd-0000-0000-0000-000000000004"
+        write(paths.main_auth_path(), make_auth("---@example.com", weird_id, now))
+        msgs = store.activate("b")
+        archived = [p for p in store.profiles() if p.account_id == weird_id]
+        self.assertEqual(len(archived), 1, msgs)
+        self.assertTrue(archived[0].name.startswith("account-"))
+        import shutil
+        shutil.rmtree(archived[0].directory)
+        store.activate("a")
 
     @patch.object(Monitor, "refresh_all")
     def test_web_server(self, refresh):
@@ -410,11 +507,107 @@ class StoreAndWebTests(unittest.TestCase):
             self.assertIn("class=\"windows\"", page)
             self.assertIn("dashboardSubtitle", page)
             self.assertIn("searchAccounts", page)
+            self.assertIn("\u989d\u5ea6", page)
+            self.assertIn("/api/import", page)
+            self.assertIn("orPaste", page)
+            self.assertIn("copyUrl", page)
+            self.assertIn("existsRelogin", page)
+            self.assertIn("portBusyHint", page)
+            self.assertIn("removeConfirm", page)
+            self.assertIn("sortReset", page)
+            self.assertIn("attentionHint", page)
+            self.assertIn("autostartNone", page)
+            self.assertIn("refreshAccount", page)
+            self.assertNotIn("t('sourceApi')", page)
+            self.assertIn('data-act="resetcredit"', page)
+            self.assertTrue(all(a.get("account_id") for a in state["accounts"]))
+            acct_c = "cccccccc-0000-0000-0000-000000000003"
+            imported_auth = make_auth("c@example.com", acct_c, datetime.now(timezone.utc), plan="team")
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(urllib.request.Request(
+                    base + "/api/import", data=json.dumps({"name": "c", "text": json.dumps(imported_auth)}).encode(),
+                    method="POST", headers={"Content-Type": "application/json"}), timeout=5)
+            self.assertEqual(cm.exception.code, 403)
+            req = urllib.request.Request(base + "/api/import", data=json.dumps({"name": "c", "text": "{"}).encode(),
+                                         method="POST", headers={"X-Token": token, "Content-Type": "application/json"})
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(cm.exception.code, 400)
+            req = urllib.request.Request(
+                base + "/api/import",
+                data=json.dumps({"name": "c", "text": json.dumps(imported_auth)}).encode(),
+                method="POST", headers={"X-Token": token, "Content-Type": "application/json"})
+            imported = json.loads(urllib.request.urlopen(req, timeout=5).read())
+            self.assertTrue(imported["ok"])
+            self.assertEqual(imported["name"], "c")
+            self.assertEqual(imported["email"], "c@example.com")
+            self.assertEqual(store.get_profile("c").account_id, acct_c)
+            self.assertTrue(imported["directory"].endswith("/c") or imported["directory"].endswith("\\c"))
+            dup_auth = make_auth("a@example.com", self.acct_a, datetime.now(timezone.utc))
+            req = urllib.request.Request(
+                base + "/api/import",
+                data=json.dumps({"name": "a-dup", "text": json.dumps(dup_auth)}).encode(),
+                method="POST", headers={"X-Token": token, "Content-Type": "application/json"})
+            duped = json.loads(urllib.request.urlopen(req, timeout=5).read())
+            self.assertEqual(duped["duplicate"], "a")
+            req = urllib.request.Request(base + "/api/settings", data=json.dumps({"interval": 15}).encode(),
+                                         method="POST", headers={"X-Token": token, "Content-Type": "application/json"})
+            settings = json.loads(urllib.request.urlopen(req, timeout=5).read())
+            self.assertEqual(settings["interval"], 15)
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(urllib.request.Request(
+                    base + "/api/remove", data=json.dumps({"name": "c"}).encode(),
+                    method="POST", headers={"Content-Type": "application/json"}), timeout=5)
+            self.assertEqual(cm.exception.code, 403)
+            req = urllib.request.Request(base + "/api/remove", data=json.dumps({"name": "zzz"}).encode(),
+                                         method="POST", headers={"X-Token": token, "Content-Type": "application/json"})
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(cm.exception.code, 400)
+            main_before = paths.main_auth_path().read_bytes()
+            req = urllib.request.Request(base + "/api/remove", data=json.dumps({"name": "c", "revision": store.removal_revision("c")}).encode(),
+                                         method="POST", headers={"X-Token": token, "Content-Type": "application/json"})
+            removed = json.loads(urllib.request.urlopen(req, timeout=5).read())
+            self.assertTrue(removed["ok"])
+            self.assertTrue((Path(removed["backup"]) / "auth.json").exists())
+            with self.assertRaises(store.StoreError):
+                store.get_profile("c")
+            self.assertEqual(paths.main_auth_path().read_bytes(), main_before)
+            req = urllib.request.Request(base + "/api/settings", data=json.dumps({"interval": "nope"}).encode(),
+                                         method="POST", headers={"X-Token": token, "Content-Type": "application/json"})
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(cm.exception.code, 400)
+            huge = json.dumps({"name": "too-big", "text": "x" * 300000}).encode()
+            req = urllib.request.Request(base + "/api/import", data=huge, method="POST",
+                                         headers={"X-Token": token, "Content-Type": "application/json"})
+            with self.assertRaises(urllib.error.HTTPError) as cm:
+                urllib.request.urlopen(req, timeout=5)
+            self.assertEqual(cm.exception.code, 413)
+            newer = make_auth("a@example.com", self.acct_a, datetime.now(timezone.utc) + timedelta(minutes=5))
+            write(paths.main_auth_path(), newer)
+            req = urllib.request.Request(base + "/api/sync", data=b"{}", method="POST",
+                                         headers={"X-Token": token, "Content-Type": "application/json"})
+            synced = json.loads(urllib.request.urlopen(req, timeout=5).read())
+            self.assertTrue(synced["ok"])
+            self.assertTrue(synced["note"])
             req = urllib.request.Request(base + "/api/switch", data=json.dumps({"name": "b"}).encode(), method="POST",
                                          headers={"X-Token": token, "Content-Type": "application/json"})
             resp = json.loads(urllib.request.urlopen(req, timeout=5).read())
             self.assertTrue(resp["ok"])
+            self.assertIn("codex_running", resp)
+            self.assertEqual(resp.get("undo"), "a")
             self.assertEqual(store.main_profile().account_id, self.acct_b)
+            orphan = "eeeeeeee-0000-0000-0000-000000000005"
+            write(paths.main_auth_path(), make_auth("e@example.com", orphan, datetime.now(timezone.utc)))
+            monitor.reload_profiles()
+            req = urllib.request.Request(base + "/api/switch", data=json.dumps({"name": "b"}).encode(), method="POST",
+                                         headers={"X-Token": token, "Content-Type": "application/json"})
+            orphaned = json.loads(urllib.request.urlopen(req, timeout=5).read())
+            self.assertNotEqual(orphaned.get("undo"), "main")
+            self.assertEqual(store.get_profile(orphaned["undo"]).account_id, orphan)
+            import shutil
+            shutil.rmtree(store.get_profile(orphaned["undo"]).directory)
             req = urllib.request.Request(base + "/api/auth/b", headers={"X-Token": token})
             auth = json.loads(urllib.request.urlopen(req, timeout=5).read())
             self.assertEqual(json.loads(auth["text"])["tokens"]["account_id"], self.acct_b)
@@ -424,11 +617,47 @@ class StoreAndWebTests(unittest.TestCase):
                 urllib.request.urlopen(req, timeout=5)
             self.assertEqual(cm.exception.code, 400)
             store.activate("a")
+            leftover = type("Leftover", (), {"phase": "cancelled", "error": None, "cancel": lambda self: None})()
+            monitor.login, monitor.login_name, monitor.login_mode = leftover, "stale", "browser"
+            req = urllib.request.Request(base + "/api/login/cancel", data=b"{}", method="POST",
+                                         headers={"X-Token": token, "Content-Type": "application/json"})
+            self.assertTrue(json.loads(urllib.request.urlopen(req, timeout=5).read())["ok"])
+            req = urllib.request.Request(base + "/api/login/status", headers={"X-Token": token})
+            self.assertEqual(json.loads(urllib.request.urlopen(req, timeout=5).read())["phase"], "idle")
         finally:
             server.shutdown()
             server.server_close()
             monitor.stop()
             t.join(timeout=5)
+
+    def test_dashboard_token_file_literal_or_generated(self):
+        self.assertIsNone(resolve_dashboard_token(None))
+        self.assertIsNone(resolve_dashboard_token("  "))
+        self.assertEqual(resolve_dashboard_token("fixed-from-cli"), "fixed-from-cli")
+        token_file = SANDBOX / "dashboard.token"
+        token_file.write_text("\n  from-file  \n# ignored\n")
+        self.assertEqual(resolve_dashboard_token(str(token_file)), "from-file")
+        empty = SANDBOX / "empty.token"
+        empty.write_text("\n\n")
+        with self.assertRaises(TokenSpecError):
+            resolve_dashboard_token(str(empty))
+        missing = SANDBOX / "missing.token"
+        with self.assertRaises(TokenSpecError):
+            resolve_dashboard_token(str(missing))
+        generated = make_server(Monitor(interval=3600), port=0)
+        pinned = make_server(Monitor(interval=3600), port=0, token="pinned-token")
+        try:
+            self.assertTrue(generated.RequestHandlerClass.token)
+            self.assertNotEqual(generated.RequestHandlerClass.token, "pinned-token")
+            self.assertEqual(pinned.RequestHandlerClass.token, "pinned-token")
+        finally:
+            generated.server_close()
+            pinned.server_close()
+
+
+class I18nTests(unittest.TestCase):
+    def test_en_and_zh_keys_match(self):
+        self.assertEqual(set(EN), set(ZH))
 
 
 class PlatformTests(unittest.TestCase):
@@ -476,8 +705,6 @@ class PlatformTests(unittest.TestCase):
             self.assertIsNotNone(found)
             self.assertEqual(found[0], "Microsoft Edge")
             self.assertEqual(found[1], [str(exe), "--inprivate"])
-            # env command uses PowerShell syntax
-            self.assertTrue(paths.IS_WINDOWS)
         finally:
             paths.IS_WINDOWS, paths.IS_MAC, os.symlink = orig_win, orig_mac, orig_symlink
 

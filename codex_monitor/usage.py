@@ -1,8 +1,9 @@
-"""Quota data: the read-only usage endpoints Codex itself uses, plus the real-time
-`token_count` events Codex appends to its session rollouts."""
+"""Quota data, explicit reset-card redemption, and real-time Codex session events."""
 from __future__ import annotations
 
 import json
+import math
+from contextlib import nullcontext
 import os
 import re
 import urllib.error
@@ -23,6 +24,78 @@ class UsageError(Exception):
         self.status = status
 
 
+def _object(value: Any) -> dict:
+    if not isinstance(value, dict):
+        raise UsageError("invalid quota response: expected an object")
+    return value
+
+
+def _number(value: Any) -> None:
+    try:
+        valid = not isinstance(value, bool) and math.isfinite(float(value))
+    except (ValueError, TypeError, OverflowError):
+        valid = False
+    if not valid:
+        raise UsageError("invalid quota response: expected a finite number")
+
+
+def validate_reset_credits(data: Any) -> dict:
+    data = _object(data)
+    count = data.get("available_count")
+    if count is not None and (type(count) is not int or count < 0):
+        raise UsageError("invalid reset-card count")
+    credits = data.get("credits") if data.get("credits") is not None else []
+    if not isinstance(credits, list):
+        raise UsageError("invalid reset-card list")
+    for credit in credits:
+        credit = _object(credit)
+        expiry = credit.get("expires_at")
+        if expiry is not None and (not isinstance(expiry, str) or parse_iso(expiry) is None):
+            raise UsageError("invalid reset-card expiry")
+    return data
+
+
+def validate_usage(data: Any) -> dict:
+    """Validate fields consumed by views; preserve unknown provider fields."""
+    data = _object(data)
+    plan = data.get("plan_type")
+    if plan is not None and not isinstance(plan, str):
+        raise UsageError("invalid quota plan")
+    extra = data.get("additional_rate_limits") if data.get("additional_rate_limits") is not None else []
+    if not isinstance(extra, list):
+        raise UsageError("invalid additional quota list")
+    limits = [data.get("rate_limit")]
+    for entry in extra:
+        entry = _object(entry)
+        for key in ("metered_feature", "limit_name"):
+            if entry.get(key) is not None and not isinstance(entry[key], str):
+                raise UsageError("invalid additional quota name")
+        limits.append(entry.get("rate_limit"))
+    for limit in limits:
+        if limit is None:
+            continue
+        limit = _object(limit)
+        for key in ("primary_window", "secondary_window", "primary", "secondary"):
+            window = limit.get(key)
+            if window is None:
+                continue
+            window = _object(window)
+            for field in ("used_percent", "reset_at", "resets_at"):
+                if window.get(field) is not None:
+                    _number(window[field])
+            for field in ("limit_window_seconds", "window_minutes"):
+                value = window.get(field)
+                if value is not None and (type(value) is not int or value < 0):
+                    raise UsageError("invalid quota window duration")
+    if data.get("credits") is not None:
+        credits = _object(data["credits"])
+        if credits.get("balance") is not None:
+            _number(credits["balance"])
+    if data.get("rate_limit_reset_credits") is not None:
+        validate_reset_credits(data["rate_limit_reset_credits"])
+    return data
+
+
 def _get(path: str, token: str, account_id: str, timeout: float = 20) -> dict:
     req = urllib.request.Request(paths.base_url() + path, headers={
         "Authorization": f"Bearer {token}",
@@ -33,7 +106,9 @@ def _get(path: str, token: str, account_id: str, timeout: float = 20) -> dict:
     })
     try:
         with net.urlopen(req, timeout=timeout) as r:
-            return json.loads(r.read().decode("utf-8"))
+            return _object(json.loads(r.read().decode("utf-8")))
+    except (ValueError, UnicodeError) as e:
+        raise UsageError("invalid quota response: malformed JSON") from e
     except urllib.error.HTTPError as e:
         body = e.read()[:300].decode("utf-8", "replace")
         if e.code == 401:
@@ -46,20 +121,25 @@ def _get(path: str, token: str, account_id: str, timeout: float = 20) -> dict:
 def fetch_usage(auth: dict) -> dict:
     """GET /wham/usage. Raises UsageError."""
     tokens = auth.get("tokens") or {}
+    if not isinstance(tokens, dict):
+        raise UsageError("auth.json has invalid tokens; re-login this account")
     token = tokens.get("access_token")
-    if not token:
+    if not isinstance(token, str) or not token.strip():
         raise UsageError("no access_token (API-key mode?)")
-    ident = identity(auth)
+    try:
+        ident = identity(auth)
+    except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+        raise UsageError("auth.json has invalid identity fields; re-login this account") from None
     if access_token_expired(ident):
         raise UsageError(f"access token expired at {fmt_local(ident['access_expires'])}; refresh or re-login", 401)
-    return _get("/wham/usage", token, ident["account_id"])
+    return validate_usage(_get("/wham/usage", token, ident["account_id"]))
 
 
 def auto_refresh_enabled() -> bool:
     return os.environ.get("CODEX_MONITOR_NO_AUTO_REFRESH") != "1"
 
 
-def fetch_usage_auto(auth_path: Path, also_main: bool = False, allow_refresh: bool = True) -> Tuple[dict, dict, bool]:
+def fetch_usage_auto(auth_path: Path, also_main: bool = False, allow_refresh: bool = True, refresh_lock: Any = None) -> Tuple[dict, dict, bool]:
     """Fetch usage for the auth.json at `auth_path`. When the server rejects the token (401) or it
     has expired locally, exchange the refresh token once - exactly what Codex itself does - write
     the new tokens back (also to ~/.codex/auth.json when `also_main`), and retry.
@@ -73,19 +153,23 @@ def fetch_usage_auto(auth_path: Path, also_main: bool = False, allow_refresh: bo
     except UsageError as e:
         if e.status != 401 or not allow_refresh or not auto_refresh_enabled():
             raise
-        rt = (auth.get("tokens") or {}).get("refresh_token")
-        if not rt:
-            raise
-        from .oauth import OAuthError, apply_refreshed, refresh_tokens
-        try:
-            new = refresh_tokens(rt)
-        except OAuthError as oe:
-            raise UsageError(f"session revoked: token rejected and refresh failed ({oe}); re-login this account", 401) from oe
-        apply_refreshed(auth_path, new)
-        if also_main:
-            apply_refreshed(paths.main_auth_path(), new)
-        auth = read_json(auth_path) or {}
-        return fetch_usage(auth), auth, True
+        with refresh_lock if refresh_lock is not None else nullcontext():
+            current = read_json(auth_path) or {}
+            if current != auth:
+                return fetch_usage(current), current, False
+            rt = (auth.get("tokens") or {}).get("refresh_token")
+            if not rt:
+                raise
+            from .oauth import OAuthError, apply_refreshed, refresh_tokens, sync_refreshed_copies
+            try:
+                new = refresh_tokens(rt)
+            except OAuthError as oe:
+                raise UsageError(f"session revoked: token rejected and refresh failed ({oe}); re-login this account", 401) from oe
+            if not apply_refreshed(auth_path, new, expected_refresh_token=rt, expected_account_id=identity(auth).get("account_id")):
+                raise UsageError("credentials changed during refresh; retry with the current login")
+            sync_refreshed_copies(auth_path, auth, new, also_main=also_main)
+            auth = read_json(auth_path) or {}
+            return fetch_usage(auth), auth, True
 
 
 def fetch_reset_credits(auth: dict) -> Optional[dict]:
@@ -94,9 +178,49 @@ def fetch_reset_credits(auth: dict) -> Optional[dict]:
     if not token:
         return None
     try:
-        return _get("/wham/rate-limit-reset-credits", token, identity(auth)["account_id"])
+        return validate_reset_credits(_get("/wham/rate-limit-reset-credits", token, identity(auth)["account_id"]))
     except UsageError:
         return None
+
+
+def consume_reset_credit(auth: dict, request_id: str) -> dict:
+    """Spend one banked reset on explicit request. Never retry the POST automatically.
+
+    Matches OpenAI's backend-client/src/client/rate_limit_resets.rs. The backend
+    uses redeem_request_id for idempotency and selects an applicable credit.
+    """
+    ident = identity(auth)
+    token = (auth.get("tokens") or {}).get("access_token")
+    if not token or not ident["account_id"]:
+        raise UsageError("this account has no ChatGPT access token or account id", 401)
+    if access_token_expired(ident):
+        raise UsageError("access token expired; refresh the token or re-login before using a reset card", 401)
+    req = urllib.request.Request(paths.base_url() + "/wham/rate-limit-reset-credits/consume",
+                                 data=json.dumps({"redeem_request_id": request_id}).encode("utf-8"),
+                                 method="POST", headers={
+        "Authorization": f"Bearer {token}",
+        "ChatGPT-Account-Id": ident["account_id"],
+        "User-Agent": paths.USER_AGENT,
+        "originator": "codex_cli_rs",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    })
+    try:
+        with net.urlopen(req, timeout=30) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        # Do not surface raw upstream response bodies containing account data.
+        raise UsageError(f"reset-card request failed (HTTP {e.code})", e.code) from e
+    except (urllib.error.URLError, OSError) as e:
+        raise UsageError("reset-card outcome could not be confirmed; retry the same request") from e
+    except (ValueError, UnicodeError) as e:
+        raise UsageError("reset-card response could not be read; retry the same request") from e
+    if not isinstance(result, dict) or result.get("code") not in {"reset", "nothing_to_reset", "no_credit", "already_redeemed"}:
+        raise UsageError("unknown reset-card outcome; retry the same request")
+    windows = result.get("windows_reset", 0)
+    if not isinstance(windows, int) or isinstance(windows, bool) or windows < 0:
+        raise UsageError("invalid reset-card outcome; retry the same request")
+    return {"code": result["code"], "windows_reset": windows}
 
 
 # ---------------------------------------------------------------- windows / views
@@ -461,10 +585,12 @@ class AccountState:
                 if e and (earliest is None or e < earliest):
                     earliest = e
         plan = (self.usage or {}).get("plan_type") or (self.live.plan_type if self.live else None) or self.ident.get("plan")
+        credit_info = (self.usage or {}).get("credits") or {}
         tight = min(windows, key=lambda w: w["remaining_percent"]) if windows else None
         return {
             "name": self.name,
             "display_name": self.display_name,
+            "account_id": self.ident.get("account_id") or "",
             "email": self.ident.get("email") or "",
             "plan": plan or "",
             "plan_label": plan_label(plan),
@@ -477,7 +603,8 @@ class AccountState:
             "limit_reached_detail": reached_detail((self.usage or {}).get("rate_limit_reached_type")) if not live else None,
             "reset_credits": reset_credits,
             "reset_credits_earliest_expiry": earliest,
-            "credits_balance": ((self.usage or {}).get("credits") or {}).get("balance") if ((self.usage or {}).get("credits") or {}).get("has_credits") else None,
+            "credits_balance": credit_info.get("balance"),
+            "credits_unlimited": credit_info.get("unlimited") is True,
             "subscription_until": self.ident.get("subscription_until"),
             "subscription_checked": self.ident.get("subscription_checked"),
             "access_expires": self.ident.get("access_expires"),
@@ -509,7 +636,8 @@ def format_view(v: dict) -> List[str]:
             lines.append(f"    {x['name']}: " + ", ".join(parts))
     rc = v["reset_credits"]
     rc_txt = "-" if rc is None else str(rc) + (f" (earliest expiry {fmt_local(v['reset_credits_earliest_expiry'], '%m-%d')})" if v["reset_credits_earliest_expiry"] else "")
-    lines.append(f"    reset credits {rc_txt}" + (f"   credit balance {v['credits_balance']}" if v["credits_balance"] else ""))
+    balance = "unlimited" if v.get("credits_unlimited") else v["credits_balance"]
+    lines.append(f"    reset credits {rc_txt}" + (f"   credit balance {balance}" if balance is not None else ""))
     lines.append(f"    subscription until {fmt_local(v['subscription_until'])}   token valid until {fmt_local(v['access_expires'])}   last refresh {fmt_local(v['last_refresh'], '%Y-%m-%d %H:%M')}")
     if v["source"]:
         lines.append(f"    source: {v['source']} @ {fmt_local(v['source_at'], '%H:%M:%S')}" + ("  (stale, showing cached data; " + str(v["error"]) + ")" if v["stale"] else ""))
@@ -539,9 +667,14 @@ def load_cache(account_id: str) -> Optional[Tuple[dict, Optional[dict], datetime
     try:
         with open(cache_path(account_id), "r", encoding="utf-8") as f:
             d = json.load(f)
-        ts = parse_iso(d.get("fetchedAt"))
-        if not ts or not isinstance(d.get("usage"), dict):
+        d = _object(d)
+        stamp = d.get("fetchedAt")
+        ts = parse_iso(stamp) if isinstance(stamp, str) else None
+        if not ts:
             return None
+        validate_usage(d.get("usage"))
+        if d.get("resetCredits") is not None:
+            validate_reset_credits(d["resetCredits"])
         return d["usage"], d.get("resetCredits"), ts
-    except (OSError, ValueError):
+    except (OSError, ValueError, UsageError):
         return None

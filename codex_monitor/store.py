@@ -9,13 +9,15 @@ import stat
 import subprocess
 import tempfile
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
 from . import paths
-from .identity import identity, now_utc
+from .identity import identity
+from .locking import file_lock
 
 
 class StoreError(Exception):
@@ -84,31 +86,45 @@ def has_stored_credentials(directory: Path) -> bool:
 
 def sanitize(name: str) -> str:
     keep = "".join(c if (c.isalnum() or c in "._-") else "-" for c in name.strip()).strip("._-")
-    if not keep:
+    if not keep or len(keep) > 128:
         raise StoreError(f"invalid account name: {name!r}")
     return keep
 
 
-def atomic_write(path: Path, data: bytes, create_parent: bool = True) -> None:
+def atomic_write(path: Path, data: bytes, create_parent: bool = True, durable: bool = False) -> None:
     if create_parent:
         path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
+    # Refresh's read/check/write and every application credential writer share this lock.
+    with file_lock(path.parent / ".auth.lock") if path.name == "auth.json" else nullcontext():
+        fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.tmp-", dir=str(path.parent))
         try:
-            os.chmod(tmp, 0o600)
-        except OSError:
-            pass
-        os.replace(tmp, path)
-    finally:
-        if os.path.exists(tmp):
-            os.unlink(tmp)
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+                if durable:
+                    f.flush()
+                    os.fsync(f.fileno())
+            os.replace(tmp, path)
+            if durable and os.name != "nt":
+                directory_fd = os.open(str(path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+        finally:
+            if os.path.exists(tmp):
+                os.unlink(tmp)
 
 
 def _load(name: str, directory: Path, is_main: bool) -> Profile:
     auth = read_json(directory / "auth.json")
-    return Profile(name=name, directory=directory, auth=auth, is_main=is_main, ident=identity(auth))
+    try:
+        ident = identity(auth)
+        if any(not isinstance(ident.get(key), str) for key in ("account_id", "email", "plan")):
+            raise ValueError("invalid credential identity")
+    except (AttributeError, TypeError, ValueError, OverflowError, OSError):
+        # One broken external auth file must not hide every other account.
+        auth, ident = None, identity(None)
+    return Profile(name=name, directory=directory, auth=auth, is_main=is_main, ident=ident)
 
 
 def main_profile() -> Optional[Profile]:
@@ -141,7 +157,17 @@ def find_by_account(account_id: str, exclude: Optional[str] = None) -> Optional[
     return None
 
 
+def resolve_name(name: str) -> str:
+    """Keep an existing exact folder name, otherwise normalize CLI shorthand."""
+    exact = (isinstance(name, str) and bool(name) and not name.startswith((".", "_"))
+             and not any(char in name for char in ("/", "\\", "\0")))
+    if exact and (paths.accounts_dir() / name).is_dir():
+        return name
+    return sanitize(name)
+
+
 def get_profile(name: str) -> Profile:
+    name = resolve_name(name)
     d = paths.accounts_dir() / name
     if not (d / "auth.json").exists():
         raise StoreError(f"no account named {name!r} ({d / 'auth.json'} does not exist)")
@@ -154,25 +180,68 @@ def adopt() -> Optional[str]:
     main = main_profile()
     if not main or not main.auth:
         return None
-    target = find_by_account(main.account_id)
-    if not target:
+    candidates = [profile for profile in profiles() if profile.account_id == main.account_id]
+    if not main.account_id or not candidates:
+        return None
+    def session_token(profile: Profile) -> Optional[str]:
+        value = ((profile.auth or {}).get("tokens") or {}).get("refresh_token")
+        return value if isinstance(value, str) and value else None
+
+    main_token = session_token(main)
+    matching = [profile for profile in candidates if main_token and session_token(profile) == main_token]
+    if matching:
+        target = matching[0]
+    elif len({session_token(profile) for profile in candidates}) == 1:
+        target = candidates[0]
+    else:
+        # After an external rotation, several independent sessions are ambiguous.
+        # Preserve them rather than choosing a destination by directory order.
         return None
     m_ts = main.ident["last_refresh"] or main.file_mtime() or datetime.min.replace(tzinfo=timezone.utc)
     t_ts = target.ident["last_refresh"] or target.file_mtime() or datetime.min.replace(tzinfo=timezone.utc)
     if m_ts <= t_ts:
         return None
-    data = main.auth_path.read_bytes()
-    if target.auth_path.read_bytes() == data:
+    try:
+        data = main.auth_path.read_bytes()
+        current_account = identity(json.loads(data)).get("account_id")
+        unchanged = target.auth_path.read_bytes() == data
+    except (FileNotFoundError, ValueError, TypeError, AttributeError):
         return None
-    atomic_write(target.auth_path, data, create_parent=False)
-    return f"synced refreshed tokens from {paths.display_path(main.auth_path)} into account '{target.name}'"
+    if current_account != main.account_id or unchanged:
+        return None
+    previous_token = ((target.auth or {}).get("tokens") or {}).get("refresh_token")
+    updated = []
+    for profile in candidates:
+        token = ((profile.auth or {}).get("tokens") or {}).get("refresh_token")
+        if profile.name != target.name and (not previous_token or token != previous_token):
+            continue
+        timestamp = profile.ident["last_refresh"] or profile.file_mtime()
+        if timestamp and timestamp > m_ts:
+            continue
+        try:
+            with file_lock(profile.directory / ".auth.lock"):
+                # Re-read inside the writer lock so an intervening import is preserved.
+                if read_json(profile.auth_path) != profile.auth:
+                    continue
+                atomic_write(profile.auth_path, data, create_parent=False)
+        except FileNotFoundError:
+            continue
+        updated.append(profile.name)
+    if not updated:
+        return None
+    names = ", ".join("'%s'" % name for name in updated)
+    return f"synced refreshed tokens from {paths.display_path(main.auth_path)} into account {names}"
 
 
 def archive_main_as_profile(main: Profile) -> Profile:
     if not main.account_id or not main.auth:
         raise StoreError("current login has no usable credentials")
-    base = sanitize((main.ident.get("email") or "account-" + main.account_id[:8]).split("@", 1)[0])
-    name = base or "account-" + main.account_id[:8]
+    raw = (main.ident.get("email") or "account-" + main.account_id[:8]).split("@", 1)[0]
+    try:
+        base = sanitize(raw)
+    except StoreError:
+        base = "account-" + main.account_id[:8]
+    name = base
     suffix = 2
     while (paths.accounts_dir() / name).exists():
         name = f"{base}-{suffix}"
@@ -205,12 +274,12 @@ def activate(name: str) -> List[str]:
         dst = backup_main(main)
         messages.append(f"backed up current {paths.display_path(main.auth_path)} to {dst}")
     atomic_write(paths.main_auth_path(), target.auth_path.read_bytes())
-    messages.append(f"switched: {paths.display_path(paths.main_auth_path())} -> '{name}' ({target.display_name})")
+    messages.append(f"switched: {paths.display_path(paths.main_auth_path())} -> '{target.name}' ({target.display_name})")
     return messages
 
 
 def save_main(name: str, force: bool = False) -> Profile:
-    name = sanitize(name)
+    name = resolve_name(name)
     main = main_profile()
     if not main or not main.auth:
         raise StoreError(f"{paths.main_auth_path()} does not exist or is not valid JSON")
@@ -221,23 +290,60 @@ def save_main(name: str, force: bool = False) -> Profile:
     return get_profile(name)
 
 
-def import_file(name: str, src: Path, force: bool = False) -> Profile:
-    name = sanitize(name)
-    auth = read_json(src)
-    if not auth or not ((auth.get("tokens") or {}).get("access_token") or auth.get("OPENAI_API_KEY")):
-        raise StoreError(f"{src} is not a valid Codex auth.json")
+def import_text(name: str, text: str, force: bool = False) -> Profile:
+    """Install a pasted or uploaded auth.json. Same validation as `import_file`."""
+    name = resolve_name(name)
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    try:
+        auth = json.loads(text)
+    except ValueError:
+        raise StoreError("not valid JSON") from None
+    if not isinstance(auth, dict):
+        raise StoreError("not a valid Codex auth.json")
+    tokens = auth.get("tokens")
+    if tokens is not None and not isinstance(tokens, dict):
+        raise StoreError("auth tokens must be an object")
+    tokens = tokens or {}
+    values = [auth.get(key) for key in ("OPENAI_API_KEY", "auth_mode", "last_refresh")]
+    values += [tokens.get(key) for key in ("access_token", "id_token", "refresh_token", "account_id")]
+    if any(value is not None and not isinstance(value, str) for value in values):
+        raise StoreError("auth credential fields must be strings")
+    if not ((tokens.get("access_token") or "").strip() or (auth.get("OPENAI_API_KEY") or "").strip()):
+        raise StoreError("not a valid Codex auth.json")
+    try:
+        ident = identity(auth)
+        if any(not isinstance(ident[key], str) for key in ("email", "plan", "account_id")):
+            raise ValueError
+        text.encode("utf-8")
+    except (AttributeError, TypeError, ValueError, OverflowError):
+        raise StoreError("invalid credential identity or timestamp") from None
     dst = paths.accounts_dir() / name / "auth.json"
     if dst.exists() and not force:
         raise StoreError(f"account '{name}' already exists (use --force to overwrite)")
-    atomic_write(dst, src.read_bytes())
+    atomic_write(dst, text.encode("utf-8"))
     return get_profile(name)
+
+
+def import_file(name: str, src: Path, force: bool = False) -> Profile:
+    try:
+        text = src.read_text(encoding="utf-8")
+    except OSError as error:
+        raise StoreError(f"cannot read {src}: {error}") from error
+    try:
+        return import_text(name, text, force=force)
+    except StoreError as error:
+        if str(error) == "not a valid Codex auth.json":
+            raise StoreError(f"{src} is not a valid Codex auth.json") from error
+        raise
 
 
 def export(name: str, dest: Optional[Path]) -> Path:
     p = get_profile(name)
-    dst = dest if dest else Path.cwd() / f"auth-{name}.json"
+    filename = f"auth-{p.name}.json"
+    dst = dest if dest else Path.cwd() / filename
     if dst.is_dir():
-        dst = dst / f"auth-{name}.json"
+        dst = dst / filename
     atomic_write(dst, p.auth_path.read_bytes())
     return dst
 
@@ -340,8 +446,17 @@ def codex_processes_running() -> bool:
     """Best-effort: is a Codex CLI / desktop process alive? Used only for a warning."""
     try:
         if paths.IS_WINDOWS:
-            out = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=10).stdout.lower()
-            return "codex" in out
+            out = subprocess.run(["tasklist"], capture_output=True, text=True, timeout=10).stdout
+            for line in out.splitlines():
+                low = line.lower()
+                if "codex-monitor" in low or "codex-acct" in low or "codex_monitor" in low:
+                    continue
+                name = low.split()[0] if low.split() else ""
+                if name in ("codex.exe", "codex"):
+                    return True
+                if "codex framework" in low or "app-server" in low:
+                    return True
+            return False
         out = subprocess.run(["pgrep", "-fl", "codex"], capture_output=True, text=True, timeout=10).stdout
         for line in out.splitlines():
             if "codex-monitor" in line or "codex-acct" in line or "codex_monitor" in line:
@@ -351,7 +466,3 @@ def codex_processes_running() -> bool:
     except (OSError, subprocess.SubprocessError):
         pass
     return False
-
-
-def touch_now() -> datetime:
-    return now_utc()

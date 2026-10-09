@@ -45,6 +45,15 @@ def cache_dir() -> Path:
     return accounts_dir() / ".cache"
 
 
+def dashboard_token_path() -> Path:
+    raw = os.environ.get("CODEX_MONITOR_TOKEN_FILE")
+    if raw:
+        return Path(raw).expanduser()
+    xdg = os.environ.get("XDG_DATA_HOME")
+    root = Path(xdg).expanduser() if xdg else Path.home() / ".local" / "share"
+    return root / "codex-monitor" / "dashboard.token"
+
+
 def base_url() -> str:
     """`chatgpt_base_url` from config.toml, or the default backend."""
     cfg = codex_home() / "config.toml"

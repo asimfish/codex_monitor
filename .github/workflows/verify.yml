@@ -15,7 +15,10 @@ jobs:
         with:
           python-version: '3.11'
       - run: python tests/test_python.py
+      - run: python tests/test_reset_credits.py
       - run: python tests/test_cli.py
+      - run: python tests/test_web_regressions.py
+      - run: python tests/test_recovery.py
       - run: python tests/test_dashboard.py
       - run: python tests/test_removal.py
       - run: python tests/test_rename.py
@@ -35,6 +38,12 @@ jobs:
       - name: Verify real browser layout and tag interactions
         if: runner.os == 'Linux'
         run: SCREENSHOT_DIR=/tmp/dashboard-screenshots node tests/check_web_ui.mjs
+      - name: Verify recovery and failure journeys in Chromium
+        if: runner.os == 'Linux'
+        run: |
+          npm install --prefix "$RUNNER_TEMP/codex-monitor-browser" --no-save --package-lock=false playwright@1.62.1
+          "$RUNNER_TEMP/codex-monitor-browser/node_modules/.bin/playwright" install --with-deps chromium
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/codex-monitor-browser/node_modules/playwright" node tests/test_web_ui.cjs
   macos:
     runs-on: macos-14
     steps:
