@@ -64,6 +64,47 @@ async function reachable(locator) {
     await page.goto(`http://127.0.0.1:${port}/?token=ui-test&lang=en`);
     await page.locator('.card').last().waitFor();
 
+    const failurePage = await browser.newPage();
+    failurePage.on('pageerror', error => errors.push(error.message));
+    await failurePage.goto(`http://127.0.0.1:${port}/?token=ui-test&lang=zh`);
+    await failurePage.locator('[data-account="alice"]').waitFor();
+    for (const scenario of [
+      { kind: 'http', status: 504, expected: 'HTTP 504' },
+      { kind: 'http', status: 403, expected: 'HTTP 403' },
+      { kind: 'network', expected: '无法连接仪表盘服务' },
+      { kind: 'abort', expected: '请求超时' },
+      { kind: 'server', expected: 'fixture quota error' },
+    ]) {
+      await failurePage.evaluate(scenario => {
+        window.originalFetch ||= window.fetch;
+        window.fetch = (path, options) => {
+          if (path !== '/api/refresh' || options?.method !== 'POST') return window.originalFetch(path, options);
+          if (scenario.kind === 'network') return Promise.reject(new TypeError('请求失败'));
+          if (scenario.kind === 'abort') return Promise.reject(new DOMException('Aborted', 'AbortError'));
+          const body = scenario.kind === 'server' ? JSON.stringify({ error: 'fixture quota error' }) : '';
+          // HTTP/2 and synthetic responses can omit statusText and JSON details.
+          return Promise.resolve(new Response(body, { status: scenario.status || 400, statusText: '' }));
+        };
+      }, scenario);
+      const account = failurePage.locator('[data-account="alice"]');
+      if (!await account.locator('.menu').evaluate(el => el.classList.contains('open'))) {
+        await account.locator('[data-act="menu"]').click();
+      }
+      const dialogPromise = failurePage.waitForEvent('dialog').then(async dialog => {
+        const message = dialog.message();
+        await dialog.dismiss();
+        return message;
+      });
+      await account.locator('[data-act="refreshone"]').click();
+      const message = await dialogPromise;
+      await failurePage.waitForFunction(() => !actionPending.size);
+      assert(message.includes(scenario.expected), `Refresh error lost its cause: ${JSON.stringify({ scenario, message })}`);
+      if (scenario.kind === 'server') assert(message.includes('HTTP 400'), 'Server details must not hide the HTTP status');
+      assert(await account.locator('[data-act="refreshone"]').isEnabled(), 'Failed refresh must remain retryable');
+    }
+    await failurePage.close();
+    console.log('PASS: quota-refresh failures preserve HTTP status, distinguish connection failures and timeouts, and retain server details');
+
     const credit = page.locator('[data-account="alice"] .credit-balance');
     assert.equal(await credit.locator('b').textContent(), '62,500');
     assert.equal(await page.locator('.reached').count(), 0, 'The redundant quota-limit notice should be removed');

@@ -29,9 +29,16 @@ async function api(path, method='GET', body=null) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 45000);
   try {
-    const r = await fetch(path, {method, signal:controller.signal, headers:{'X-Token':TOKEN,'Content-Type':'application/json'}, body:body ? JSON.stringify(body) : null});
+    const r = await fetch(path, {method, signal:controller.signal, headers:{'X-Token':TOKEN,'Content-Type':'application/json'}, body:body ? JSON.stringify(body) : null}).catch(e => {
+      if (e.name === 'TypeError') throw new Error(t('requestConnectionFailed'));
+      throw e;
+    });
     const j = await r.json().catch(() => null);
-    if (!r.ok) throw new Error(j?.error || r.statusText || t('requestFailed'));
+    if (!r.ok) {
+      const message = t('requestFailed').replace('{status}', r.status);
+      const detail = typeof j?.error === 'string' ? j.error.trim() : '';
+      throw new Error(detail ? message + ' ' + detail : message);
+    }
     if (!j || typeof j !== 'object') throw new Error(t('invalidResponse'));
     return j;
   } catch(e) { if(e.name==='AbortError')throw new Error(t('requestTimeout'));throw e; }
