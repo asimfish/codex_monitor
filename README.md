@@ -141,20 +141,23 @@ git rev-parse HEAD
 
 #### Reproduce a specific source version
 
-This pins commit `b310a5e`, which includes native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
+This pins commit `3e2d2ac`, which includes the updated web dashboard and recovery flows, native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach b310a5eb6522d1b169961fa8c271b68839bbed86
+git checkout --detach 3e2d2ac4f05ee408782843f11cbfbd5dd2997ec6
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
 python3 tests/test_removal.py
+python3 tests/test_rename.py
 bash scripts/build.sh
 ```
 
 Run `bash scripts/install.sh` afterward only to install that version; this replaces the existing native app. Compilation uses the system Swift toolchain without third-party Swift dependencies. Fabricated demo accounts can check layout, but do not validate real login or quota endpoints.
+
+To run the same pinned web version on macOS, Linux or Windows, use `python3 bin/codex-monitor serve` (`py bin\codex-monitor serve` on Windows) from that directory. No package installation is needed. Open the complete local URL printed by the server; after a restart, use its newly printed URL. For Linux installation from this pinned checkout, run `bash scripts/install-linux.sh` and then `~/.local/share/codex-monitor/venv/bin/codex-monitor serve`. No Swift toolchain is needed for the web dashboard.
 
 Scrolling, automatic/manual ordering, and duplicate-profile consolidation are native-widget features. Duplicate aliases for the same workspace and user appear once; files remain on disk. The active account stays pinned, with usable quota and unexpired credentials preferred among other accounts.
 
@@ -263,11 +266,12 @@ For a headless server, run `codex-monitor serve --no-browser`, forward the dashb
 
 ### 3.3 Verification scope and downloads
 
-[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `b310a5e` or newer code. The checks cover:
+[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `3e2d2ac` or newer code. The checks cover:
 
 | Check | Verified environment | Limits |
 |---|---|---|
 | Python tests, `pip install .`, CLI help | GitHub Windows, Linux and macOS runners, Python 3.11 | Does not verify real login, autostart or every desktop interaction on all three platforms |
+| Browser button/recovery tests and installed Linux dashboard | GitHub Ubuntu runner, Chromium; isolated Linux install also checked with Python 3.8 | Login, upstream quota/reset responses and OS autostart actions in browser tests are mocked; no real reset credits are spent |
 | Swift storage/order/shared-tag tests, native build and packaging | `macos-14` runner, Apple Silicon | Does not verify Intel hardware or appearance on every macOS version |
 | Native installation, launch at login, real account use | Developer Mac: macOS 26.2, Apple Silicon | Does not guarantee identical transparency on another Mac |
 
@@ -355,7 +359,7 @@ Codex Monitor does not refresh tokens on a schedule and never rewrites a *workin
 
 **Login flow**
 
-Browser mode reproduces Codex CLI's own OAuth client: same `client_id`, `redirect_uri=http://localhost:1455/auth/callback`, `S256` PKCE, form-encoded `POST https://auth.openai.com/oauth/token`. The app runs the loopback listener itself and writes an `auth.json` in exactly the shape Codex writes. Device-code mode spawns `codex login --device-auth` with `CODEX_HOME` pointing at the account directory and parses the URL and code from its output.
+Browser mode reproduces Codex CLI's own OAuth client: same `client_id`, `redirect_uri=http://localhost:1455/auth/callback`, `S256` PKCE, form-encoded `POST https://auth.openai.com/oauth/token`. The app runs the loopback listener itself and writes an `auth.json` in exactly the shape Codex writes. Device-code mode spawns `codex login --device-auth` and parses the URL and code from its output. The Python CLI/web device-code flow uses a temporary `CODEX_HOME` and publishes valid credentials to the account directory only after successful completion; failed or cancelled re-login keeps existing credentials.
 
 ## 7. 🔐 Security notes
 
@@ -383,6 +387,8 @@ tests/linux_smoke.sh    Linux installer, installed dashboard restart/tag persist
 tests/test_reset_credits.py  reset-card HTTP contract, confirmation, replay/concurrency guards and quota refresh (fabricated responses)
 tests/test_web_regressions.py  import validation, refresh identity/concurrency guards, login finalization, alias updates, OAuth escaping and credential cache headers
 tests/test_recovery.py     cancelled/staged login integrity, ordered quota commits, alias token sync, malformed responses and durable reset recovery
+tests/test_merge_compat.py  existing Python switch return value and account-name compatibility
+tests/test_git_policy.py   commit format, branch protection and runtime-data exclusion
 tests/test_web_ui.cjs   optional Playwright browser checks: menu visibility, expired credentials and re-login recovery
 tests/test_web_buttons.cjs  button journeys through real HTTP/temp storage; login, autostart and quota providers use fabricated responses
 tests/run_store_tests.sh  Swift tests (macOS)
@@ -395,6 +401,8 @@ node tests/check_web_ui.mjs                                        # Node 24 + C
 python3 tests/test_web_regressions.py
 python3 tests/test_reset_credits.py                                  # no real reset cards consumed
 python3 tests/test_recovery.py
+python3 tests/test_merge_compat.py
+python3 tests/test_git_policy.py
 node tests/test_web_ui.cjs                                           # requires Playwright + Chromium; optional PLAYWRIGHT_MODULE=/path/to/playwright-core
 node tests/test_web_buttons.cjs                                      # settings, copy/download, switch/Undo, import and login controls
 node tests/test_web_buttons.cjs --clipboard-only                     # clipboard denial, error feedback and recovery
