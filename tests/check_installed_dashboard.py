@@ -47,8 +47,13 @@ def main(command: str) -> None:
 
                     html = request("/").decode()
                     assert 'id="tagDialog"' in html and 'class="account-grid"' in html
+                    assert all(marker not in html for marker in ('__STYLE__','__SCRIPT__','__EN__','__ZH__'))
+                    assert 'id="theme"' in html and 'connectionLost' in html and 'reset-credit-line' in html
+                    assert 'class="credit-balance"' in html and 'data-act="rename"' in html
+                    assert 'class="reached"' not in html
                     state = json.loads(request("/api/state"))
                     assert len(state["accounts"]) == 4
+                    assert all("credits_unlimited" in account for account in state["accounts"])
                     bob = next(account for account in state["accounts"] if account["name"] == "bob")
                     if attempt == 0:
                         assert state["accounts"][0]["availability"] == "ready"

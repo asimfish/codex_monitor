@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "profile": "forge",
+  "commit": {
+    "subject_max_length": 72,
+    "body_line_max_length": 72,
+    "require_blank_line": true,
+    "require_ascii": true,
+    "forbid_trailing_period": true,
+    "allowed_operations": [
+      "feat", "fix", "refactor", "docs", "test", "chore",
+      "perf", "style", "ci", "build", "revert"
+    ]
+  },
+  "branch": {
+    "protected": ["main", "master"],
+    "allowed_prefixes": [
+      "feat", "fix", "hotfix", "release", "exp", "docs", "refactor",
+      "test", "chore", "perf", "ci", "build", "dependabot"
+    ]
+  },
+  "staging": {"forbid_bulk": true},
+  "push": {"allow_force_with_lease": false}
+}

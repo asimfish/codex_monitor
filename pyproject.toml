@@ -28,3 +28,6 @@ codex-acct = "codex_monitor.cli:main"
 
 [tool.setuptools]
 packages = ["codex_monitor"]
+
+[tool.setuptools.package-data]
+codex_monitor = ["web_static/*.html", "web_static/*.css", "web_static/*.js"]

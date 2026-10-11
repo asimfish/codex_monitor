@@ -16,7 +16,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from codex_monitor import demo, store
+from codex_monitor import demo, store, usage
 from codex_monitor.annotations import Annotations
 from codex_monitor.monitor import Monitor
 from codex_monitor.web import make_server
@@ -143,6 +143,28 @@ class DashboardTests(unittest.TestCase):
         extras = alice.view()["extras"]
         self.assertEqual(len(extras), 2)
         self.assertEqual(extras[-1]["windows"][0]["remaining_percent"], 90)
+
+    def test_credit_balance_preserves_zero_unknown_and_unlimited(self):
+        alice = self.monitor.states["alice"]
+        for credits, balance, unlimited in [
+            ({"has_credits": True, "balance": "62500.0000000000"}, "62500.0000000000", False),
+            ({"has_credits": False, "balance": 0}, 0, False),
+            ({"has_credits": False, "balance": "0"}, "0", False),
+            ({"has_credits": True, "unlimited": True, "balance": None}, None, True),
+            ({}, None, False),
+        ]:
+            with self.subTest(credits=credits):
+                alice.usage["credits"] = credits
+                view = alice.view()
+                self.assertEqual(view["credits_balance"], balance)
+                self.assertEqual(view["credits_unlimited"], unlimited)
+                lines = "\n".join(usage.format_view(view))
+                if unlimited:
+                    self.assertIn("credit balance unlimited", lines)
+                elif balance is not None:
+                    self.assertIn("credit balance " + str(balance), lines)
+                else:
+                    self.assertNotIn("credit balance", lines)
 
     def test_authenticated_api_validation_and_persistence(self):
         server = make_server(self.monitor, port=0, token="fixture-token")

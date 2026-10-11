@@ -5,3 +5,17 @@ build/
 __pycache__/
 *.egg-info/
 dist/
+auth.json
+auth-*.json
+dashboard.token
+credentials.json
+secrets.json
+.env
+.env.*
+!.env.example
+.codex/
+.codex-accounts/
+_auth_locks/
+_reset_requests/
+sessions/
+*.log
