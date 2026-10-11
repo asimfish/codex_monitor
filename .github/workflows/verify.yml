@@ -3,6 +3,28 @@ on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
 jobs:
+  git-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python tests/test_git_policy.py
+      - name: Verify incoming commits and runtime-data paths
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BASE: ${{ github.event.before }}
+          REVIEW_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+          REVIEW_BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          policy_base="${PR_BASE:-origin/main}"
+          if [[ "$GITHUB_REF" == "refs/heads/main" && -n "$PUSH_BASE" && "$PUSH_BASE" != "0000000000000000000000000000000000000000" ]]; then
+            policy_base="$PUSH_BASE"
+          fi
+          python scripts/check_git.py --base "$policy_base" --head "$REVIEW_HEAD" --branch "$REVIEW_BRANCH"
   python:
     strategy:
       fail-fast: false
@@ -15,7 +37,11 @@ jobs:
         with:
           python-version: '3.11'
       - run: python tests/test_python.py
+      - run: python tests/test_reset_credits.py
       - run: python tests/test_cli.py
+      - run: python tests/test_web_regressions.py
+      - run: python tests/test_recovery.py
+      - run: python tests/test_merge_compat.py
       - run: python tests/test_dashboard.py
       - run: python tests/test_removal.py
       - run: python tests/test_rename.py
@@ -35,6 +61,17 @@ jobs:
       - name: Verify real browser layout and tag interactions
         if: runner.os == 'Linux'
         run: SCREENSHOT_DIR=/tmp/dashboard-screenshots node tests/check_web_ui.mjs
+      - name: Verify recovery and failure journeys in Chromium
+        if: runner.os == 'Linux'
+        run: |
+          npm install --prefix "$RUNNER_TEMP/codex-monitor-browser" --no-save --package-lock=false playwright@1.62.1
+          "$RUNNER_TEMP/codex-monitor-browser/node_modules/.bin/playwright" install --with-deps chromium
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/codex-monitor-browser/node_modules/playwright" node tests/test_web_ui.cjs
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/codex-monitor-browser/node_modules/playwright" node tests/test_web_buttons.cjs
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/codex-monitor-browser/node_modules/playwright" node tests/test_web_buttons.cjs --clipboard-only
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/codex-monitor-browser/node_modules/playwright" node tests/test_web_buttons.cjs --modal-only
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/codex-monitor-browser/node_modules/playwright" node tests/test_web_buttons.cjs --http-only
+          PLAYWRIGHT_MODULE="$RUNNER_TEMP/codex-monitor-browser/node_modules/playwright" node tests/test_web_buttons.cjs --http-only --reset-only
   macos:
     runs-on: macos-14
     steps:

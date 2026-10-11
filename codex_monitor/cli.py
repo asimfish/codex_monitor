@@ -315,7 +315,8 @@ def cmd_serve(a: argparse.Namespace) -> None:
     if a.no_auto_refresh:
         os.environ["CODEX_MONITOR_NO_AUTO_REFRESH"] = "1"
     mode = "none" if a.no_browser else ("app" if a.app else "tab")
-    serve(port=a.port, interval=a.interval, open_browser=mode, host=a.host, quiet=not a.verbose)
+    serve(port=a.port, interval=a.interval, open_browser=mode, host=a.host, quiet=not a.verbose,
+          token=a.token)
 
 
 def cmd_autostart(a: argparse.Namespace) -> None:
@@ -325,6 +326,9 @@ def cmd_autostart(a: argparse.Namespace) -> None:
     if a.interval:
         extra += ["--interval", str(a.interval)]
     if a.action == "install":
+        token_file = paths.dashboard_token_path()
+        if token_file.is_file():
+            extra += ["--token", str(token_file)]
         print(autostart.install(extra))
     elif a.action == "remove":
         print(autostart.remove())
@@ -349,6 +353,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--no-browser", action="store_true", help="do not open a browser")
     s.add_argument("--verbose", action="store_true")
     s.add_argument("--no-auto-refresh", action="store_true", help="never exchange refresh tokens, even after a 401 (default: one attempt per account per 10 min)")
+    s.add_argument("--token", metavar="TOKEN_OR_FILE",
+                   help="dashboard access token, or a file containing it; omit to generate a per-run token")
     s.set_defaults(fn=cmd_serve)
 
     s = sp.add_parser("autostart", help="start the dashboard at login (LaunchAgent / systemd / Task Scheduler)")

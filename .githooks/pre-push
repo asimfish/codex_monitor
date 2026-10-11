@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+identity=$(git config --get forge.expectedIdentity || true)
+if [ -n "$identity" ]; then
+    exec python3 scripts/check_git.py --pre-push --identity "$identity"
+fi
+exec python3 scripts/check_git.py --pre-push
