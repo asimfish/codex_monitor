@@ -48,9 +48,37 @@ class GitPolicyTests(unittest.TestCase):
         return subprocess.check_output(["git", *arguments], cwd=self.directory,
                                        env=self.environment, text=True, stderr=subprocess.STDOUT).strip()
 
-    def run_guard(self, *arguments):
+    def run_guard(self, *arguments, input=None):
         return subprocess.run([sys.executable, str(SCRIPT), *arguments], cwd=self.directory,
-                              env=self.environment, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                              env=self.environment, input=input, text=True,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+
+    def test_branch_deletion_requires_review_of_the_remote_tip(self):
+        remote_ref = "refs/heads/feat/obsolete"
+        remote_sha = "a" * 40
+        deletion = "(delete) %s %s %s\n" % ("0" * 40, remote_ref, remote_sha)
+        result = self.run_guard("--pre-push", input=deletion)
+        self.assertNotEqual(result.returncode, 0)
+        self.git("config", "forge.reviewedDelete", remote_ref + "=" + remote_sha)
+        result = self.run_guard("--pre-push", input=deletion)
+        self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_branch_deletion_rejects_stale_review(self):
+        remote_ref = "refs/heads/feat/obsolete"
+        self.git("config", "forge.reviewedDelete", remote_ref + "=" + "b" * 40)
+        deletion = "(delete) %s %s %s\n" % ("0" * 40, remote_ref, "a" * 40)
+        result = self.run_guard("--pre-push", input=deletion)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("exact remote tip", result.stdout)
+
+    def test_review_cannot_delete_protected_branches_or_tags(self):
+        for remote_ref in ("refs/heads/main", "refs/heads/master", "refs/tags/feat/obsolete"):
+            with self.subTest(remote_ref=remote_ref):
+                remote_sha = "a" * 40
+                self.git("config", "forge.reviewedDelete", remote_ref + "=" + remote_sha)
+                deletion = "(delete) %s %s %s\n" % ("0" * 40, remote_ref, remote_sha)
+                result = self.run_guard("--pre-push", input=deletion)
+                self.assertNotEqual(result.returncode, 0)
 
     def test_staged_credentials_are_rejected_without_printing_contents(self):
         (self.directory / "auth.json").write_text('{"fixture": "private-content-must-not-print"}')

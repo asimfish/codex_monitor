@@ -16,6 +16,13 @@ subject from the body with a blank line. Keep changes independently reviewable.
 Run the relevant tests before committing; do not bypass hooks or force-push.
 Pull with `--ff-only` and integrate into `main` through a reviewed squash PR.
 
+Branch deletion requires explicit approval, a verified history backup and a
+review of the current remote tip. For that operation only, add a local
+`forge.reviewedDelete` entry in the form `refs/heads/feat/name=<reviewed-sha>`.
+The push guard accepts only the exact reviewed tip and still rejects protected
+branches and tags. Remove the entry immediately after the operation; never
+commit this local authorization or use it without the branch owner's approval.
+
 Run the portable checks before proposing a merge:
 
 ```sh

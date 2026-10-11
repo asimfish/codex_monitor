@@ -80,6 +80,24 @@ def check_range(base, head, identity=None):
     return errors
 
 
+def reviewed_deletions():
+    result = subprocess.run(["git", "config", "--local", "--get-all", "forge.reviewedDelete"],
+                            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if result.returncode not in (0, 1):
+        raise ValueError("cannot read reviewed deletions")
+    return dict(line.split("=", 1) for line in result.stdout.splitlines())
+
+
+def check_deletion(remote_ref, remote_sha, reviewed):
+    prefix = "refs/heads/"
+    if not remote_ref.startswith(prefix):
+        return ["only reviewed feature branches may be deleted"]
+    errors = check_branch(remote_ref[len(prefix):], writing=True)
+    if reviewed.get(remote_ref) != remote_sha or set(remote_sha) == {"0"}:
+        errors.append("branch deletion requires review of the exact remote tip")
+    return errors
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--message-file", type=Path)
@@ -91,10 +109,11 @@ def main():
     args = parser.parse_args()
     if args.pre_push:
         errors = []
+        reviewed = reviewed_deletions()
         for line in sys.stdin:
             local_ref, local_sha, remote_ref, remote_sha = line.split()
             if set(local_sha) == {"0"}:
-                errors.append("branch deletion needs a separate reviewed operation")
+                errors.extend(check_deletion(remote_ref, remote_sha, reviewed))
                 continue
             prefix = "refs/heads/"
             branch = remote_ref[len(prefix):] if remote_ref.startswith(prefix) else remote_ref
