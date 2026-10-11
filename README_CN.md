@@ -138,20 +138,23 @@ git rev-parse HEAD
 
 #### 复现一个确定的源码版本
 
-下面锁定到包含原生标签增删改、重复存档删除和账号重命名功能的 `b310a5e` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
+下面锁定到包含新版网页布局与登录恢复、原生标签增删改、重复存档删除和账号重命名功能的 `3e2d2ac` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach b310a5eb6522d1b169961fa8c271b68839bbed86
+git checkout --detach 3e2d2ac4f05ee408782843f11cbfbd5dd2997ec6
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
 python3 tests/test_removal.py
+python3 tests/test_rename.py
 bash scripts/build.sh
 ```
 
 如需把这个版本安装到本机，再运行 `bash scripts/install.sh`；它会替换已有原生应用。仅编译使用系统 Swift 工具链，无第三方 Swift 依赖。模拟账号模式用于检查界面，不代表真实登录和额度接口已验证。
+
+要在 macOS、Linux 或 Windows 运行这个确定版本的网页，在该目录执行 `python3 bin/codex-monitor serve`（Windows 使用 `py bin\codex-monitor serve`），无需安装 Python 包。打开终端输出的完整本地地址，服务重启后使用新输出的地址。Linux 如需正式安装，在这个已锁定版本的目录执行 `bash scripts/install-linux.sh`，再运行 `~/.local/share/codex-monitor/venv/bin/codex-monitor serve`。只使用网页版无需 Swift 工具链，也不需要执行上面的原生编译测试。
 
 原生悬窗支持标签的添加、修改和删除。展开悬窗后，每张账号卡片底部都有“添加标签／编辑标签”，账号操作菜单中也有“编辑标签”。要更新已安装的悬窗，请按上方升级步骤重新编译并安装，仅更新源码或重启网页不会替换原生应用。
 
@@ -261,11 +264,12 @@ bash scripts/install-linux.sh
 
 ### 3.3 验证范围与下载
 
-[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `b310a5e` 或更新代码、且显示成功的运行。检查范围如下：
+[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `3e2d2ac` 或更新代码、且显示成功的运行。检查范围如下：
 
 | 检查 | 已验证环境 | 不代表什么 |
 |---|---|---|
 | Python 测试、`pip install .`、CLI 帮助命令 | GitHub 的 Windows、Linux、macOS runner，Python 3.11 | 不代表真实账号登录、自启或全部桌面交互均在三平台验证 |
+| 网页按钮/恢复流程与安装后的 Linux 服务 | GitHub Ubuntu runner、Chromium；另用 Python 3.8 验证隔离的 Linux 安装 | 浏览器测试中的登录、上游额度/重置接口和系统自启动操作使用模拟响应，不消耗真实重置次数 |
 | Swift 存储/排序/跨端标签测试、原生应用编译和打包 | `macos-14` runner，Apple Silicon | 不代表 Intel 实机或所有 macOS 版本上的显示效果已验证 |
 | 原生应用安装、自启、真实账号使用 | 开发机 macOS 26.2，Apple Silicon | 不保证对方电脑与截图具有相同透明效果 |
 
@@ -353,7 +357,7 @@ Codex Monitor 不会按计划刷新 token，也从不改写一份*还能用*的 
 
 **登录流程**
 
-浏览器模式复刻了 Codex CLI 自己的 OAuth 客户端：同一个 `client_id`、`redirect_uri=http://localhost:1455/auth/callback`、S256 PKCE、表单编码的 `POST https://auth.openai.com/oauth/token`。App 自己起回调监听，并写出与 Codex 完全一致格式的 `auth.json`。设备码模式则在 `CODEX_HOME` 指向账号目录的情况下运行 `codex login --device-auth`，从输出里解析链接和代码。
+浏览器模式复刻了 Codex CLI 自己的 OAuth 客户端：同一个 `client_id`、`redirect_uri=http://localhost:1455/auth/callback`、S256 PKCE、表单编码的 `POST https://auth.openai.com/oauth/token`。App 自己起回调监听，并写出与 Codex 完全一致格式的 `auth.json`。设备码模式运行 `codex login --device-auth`，从输出里解析链接和代码。Python 命令行和网页的设备码流程使用临时 `CODEX_HOME`，只有登录成功并校验凭证后才写入账号目录；重新登录失败或取消时保留已有凭证。
 
 ## 7. 🔐 安全说明
 
@@ -381,6 +385,8 @@ tests/linux_smoke.sh    Docker 检查：Linux 安装脚本、已安装服务重�
 tests/test_reset_credits.py  重置卡请求格式、确认、重复/并发保护与额度刷新（伪造响应）
 tests/test_web_regressions.py  导入校验、刷新身份/并发保护、登录完成、别名同步、OAuth 转义及禁止凭证缓存
 tests/test_recovery.py     登录取消与暂存保护、额度更新顺序、凭证副本同步、异常响应及重置请求持久化恢复
+tests/test_merge_compat.py  原有 Python 切换返回值与账号命名兼容性
+tests/test_git_policy.py   提交格式、分支保护和运行时数据排除
 tests/test_web_ui.cjs   可选 Playwright 浏览器测试：菜单可见性、凭证过期和重新登录
 tests/test_web_buttons.cjs  按钮到真实 HTTP/临时存储的交互测试；外部登录、自启和额度服务使用伪造响应
 tests/run_store_tests.sh  Swift 测试（macOS）
@@ -393,6 +399,8 @@ node tests/check_web_ui.mjs                                        # Node 24 + C
 python3 tests/test_web_regressions.py
 python3 tests/test_reset_credits.py                                  # 不消耗真实重置卡
 python3 tests/test_recovery.py
+python3 tests/test_merge_compat.py
+python3 tests/test_git_policy.py
 node tests/test_web_ui.cjs                                           # 需要 Playwright 和 Chromium；可指定 PLAYWRIGHT_MODULE=/path/to/playwright-core
 node tests/test_web_buttons.cjs                                      # 设置、复制/下载、切换/撤销、导入和登录按钮
 node tests/test_web_buttons.cjs --clipboard-only                     # 剪贴板拒绝、错误提示和恢复
