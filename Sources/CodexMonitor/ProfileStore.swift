@@ -122,6 +122,13 @@ final class ProfileStore {
     static func displayProfiles(_ profiles: [Profile]) -> [Profile] {
         var result: [Profile] = []
         var positions: [[String]: Int] = [:]
+        var usersByEmail: [[String]: Set<String>] = [:]
+        for profile in profiles {
+            if let account = profile.accountId, let email = profile.email,
+               let user = profile.identity?.userId, !user.isEmpty {
+                usersByEmail[[account, email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()], default: []].insert(user)
+            }
+        }
         for profile in profiles {
             guard let account = profile.accountId, !account.isEmpty else {
                 result.append(profile)
@@ -131,7 +138,9 @@ final class ProfileStore {
             if let user = profile.identity?.userId, !user.isEmpty {
                 person = "user:" + user
             } else if let email = profile.email, !email.isEmpty {
-                person = "email:" + email.lowercased()
+                let clean = email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                let known = usersByEmail[[account, clean]] ?? []
+                person = known.count == 1 ? "user:" + known.first! : "email:" + clean
             } else {
                 // Without a user identity, do not merge possibly shared workspaces.
                 result.append(profile)
@@ -203,7 +212,8 @@ final class ProfileStore {
         if let user = lhs.identity?.userId, !user.isEmpty,
            let other = rhs.identity?.userId, !other.isEmpty { return user == other }
         guard let email = lhs.email, !email.isEmpty, let other = rhs.email else { return false }
-        return email.lowercased() == other.lowercased()
+        return email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            == other.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     }
 
     private func directoryForChange(_ profile: Profile) throws -> URL {

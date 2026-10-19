@@ -13,6 +13,7 @@ extension L {
     static let loginStep1Hint = "建议用隐身/无痕窗口：否则浏览器会直接用当前已登录的 ChatGPT 账号授权，就加不了新号了。点击按钮时代码会自动复制到剪贴板。"
     static func loginOpenPrivate(_ app: String) -> String { "用 \(app) 隐身窗口打开" }
     static let loginOpenDefault = "用默认浏览器打开"
+    static let loginPrivateOpenFailed = "无法打开独立隐身窗口，请复制登录链接后手动打开，或选择其他浏览器。"
     static let loginStep2 = "2. 在页面里输入这个一次性代码（15 分钟内有效）"
     static let loginCopy = "复制代码"
     static let loginCopied = "已复制 ✓"

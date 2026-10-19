@@ -29,6 +29,7 @@ ln -s "$python_bin" "$task_dir/stubs/python3"
 "$python_bin" tests/test_reset_credits.py
 "$python_bin" tests/test_web_regressions.py
 "$python_bin" tests/test_recovery.py
+"$python_bin" tests/test_login_retention.py
 "$python_bin" tests/test_merge_compat.py
 "$python_bin" tests/test_dashboard.py
 "$python_bin" tests/test_removal.py

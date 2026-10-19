@@ -92,11 +92,18 @@ struct PrivateBrowser {
         }
     }
 
-    func open(_ url: String) {
+    @discardableResult func open(_ url: String) -> Bool {
+        let profile = FileManager.default.temporaryDirectory.appendingPathComponent("codex-monitor-browser-" + UUID().uuidString)
+        do { try FileManager.default.createDirectory(at: profile, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        catch { return false }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        p.arguments = ["-na", appName, "--args", flag, url]
-        try? p.run()
+        let isolated = appName == "Firefox" ? ["--no-remote", "--profile", profile.path]
+            : ["--user-data-dir=" + profile.path, "--no-first-run", "--no-default-browser-check"]
+        p.arguments = ["-W", "-na", appName, "--args", flag] + isolated + [url]
+        p.terminationHandler = { _ in try? FileManager.default.removeItem(at: profile) }
+        do { try p.run(); return true }
+        catch { try? FileManager.default.removeItem(at: profile); return false }
     }
 }
 
@@ -123,6 +130,7 @@ final class LoginSession: ObservableObject {
     @Published private(set) var phase: Phase = .resolving
     @Published private(set) var mode: Mode
     @Published private(set) var transcript = ""
+    @Published private(set) var browserOpenError: String?
 
     let name: String
     let directory: URL
@@ -131,14 +139,19 @@ final class LoginSession: ObservableObject {
     private var rawBuffer = ""
     private var finishedHandled = false
     private var browserFlow: BrowserLoginFlow?
-    /// Only a directory this session created may be deleted on failure/cancel. Re-logins into an
-    /// existing profile (or into ~/.codex itself) must never remove anything.
-    private var createdDirectory = false
+    private var attempt = UUID()
+    private var stagingDirectory: URL?
+    private let makeBrowserFlow: @MainActor () -> BrowserLoginFlow
+    private let locateCodex: () async -> String?
 
-    init(name: String, directory: URL, mode: Mode = .browser) {
+    init(name: String, directory: URL, mode: Mode = .browser,
+         makeBrowserFlow: @escaping @MainActor () -> BrowserLoginFlow = { BrowserLoginFlow() },
+         locateCodex: @escaping () async -> String? = { await CodexLocator.find() }) {
         self.name = name
         self.directory = directory
         self.mode = mode
+        self.makeBrowserFlow = makeBrowserFlow
+        self.locateCodex = locateCodex
     }
 
     var isRunning: Bool {
@@ -152,7 +165,11 @@ final class LoginSession: ObservableObject {
     var debugState: String? { browserFlow?.state }
 
     func start() {
+        attempt = UUID()
+        browserOpenError = nil
         finishedHandled = false
+        do { try ensureDirectory() }
+        catch { phase = .failed(error.localizedDescription); return }
         switch mode {
         case .browser: startBrowser()
         case .deviceCode: startDeviceCode()
@@ -179,7 +196,6 @@ final class LoginSession: ObservableObject {
     private func ensureDirectory() throws {
         if !FileManager.default.fileExists(atPath: directory.path) {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            createdDirectory = true
         }
     }
 
@@ -191,10 +207,13 @@ final class LoginSession: ObservableObject {
             phase = .failed(error.localizedDescription)
             return
         }
-        let flow = BrowserLoginFlow()
+        let flow = makeBrowserFlow()
         browserFlow = flow
         do {
-            try flow.start { [weak self] result in self?.handleCallback(result) }
+            try flow.start { [weak self, weak flow] result in
+                guard let self = self, let flow = flow, self.browserFlow === flow else { return }
+                self.handleCallback(result)
+            }
         } catch {
             phase = .failed(OAuthError.listener(error.localizedDescription).localizedDescription)
             browserFlow = nil
@@ -203,14 +222,13 @@ final class LoginSession: ObservableObject {
         phase = .waitingBrowser(url: flow.authorizeURL.absoluteString)
     }
 
-    private func handleCallback(_ result: Result<[String: String], Error>) {
+    func handleCallback(_ result: Result<[String: String], Error>) {
         guard let flow = browserFlow, isRunning else { return }
         switch result {
         case .failure(let error):
             phase = .failed(error.localizedDescription)
             flow.stop()
             browserFlow = nil
-            removeDirectoryIfEmpty()
         case .success(let query):
             guard query["state"] == flow.state else {
                 // Someone else's callback; keep waiting for ours.
@@ -218,15 +236,17 @@ final class LoginSession: ObservableObject {
             }
             guard let code = query["code"], !code.isEmpty else { return }
             phase = .exchanging
+            let currentAttempt = attempt
             Task {
                 do {
                     let tokens = try await flow.exchange(code: code)
+                    guard attempt == currentAttempt, browserFlow === flow, isRunning else { return }
                     let data = try OAuthCore.buildAuthJSON(tokens)
-                    try ProfileStore.shared.writeAtomically(data, to: directory.appendingPathComponent("auth.json"))
+                    try ProfileStore.shared.writeAtomically(data, to: directory.appendingPathComponent("auth.json"), createParent: false)
                     completeFromDisk()
                 } catch {
+                    guard attempt == currentAttempt, browserFlow === flow, isRunning else { return }
                     phase = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
-                    removeDirectoryIfEmpty()
                 }
                 flow.stop()
                 browserFlow = nil
@@ -238,8 +258,11 @@ final class LoginSession: ObservableObject {
 
     private func startDeviceCode() {
         phase = .resolving
+        let currentAttempt = attempt
         Task {
-            guard let codex = await CodexLocator.find() else {
+            let codex = await locateCodex()
+            guard attempt == currentAttempt, isRunning else { return }
+            guard let codex = codex else {
                 phase = .failed(L.loginCodexNotFound)
                 return
             }
@@ -251,6 +274,9 @@ final class LoginSession: ObservableObject {
         phase = .starting
         do {
             try ensureDirectory()
+            let staging = directory.deletingLastPathComponent().appendingPathComponent(".codex-login-" + UUID().uuidString)
+            try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+            stagingDirectory = staging
         } catch {
             phase = .failed(error.localizedDescription)
             return
@@ -259,13 +285,14 @@ final class LoginSession: ObservableObject {
         p.executableURL = URL(fileURLWithPath: codexPath)
         p.arguments = ["login", "--device-auth"]
         var env = ProcessInfo.processInfo.environment
-        env["CODEX_HOME"] = directory.path
+        env["CODEX_HOME"] = stagingDirectory!.path
         let binDir = (codexPath as NSString).deletingLastPathComponent
         env["PATH"] = "\(binDir):/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         env["NO_COLOR"] = "1"
         env["TERM"] = "dumb"
         p.environment = env
-        p.currentDirectoryURL = directory
+        p.currentDirectoryURL = stagingDirectory
+        let currentAttempt = attempt
         let pipe = Pipe()
         p.standardOutput = pipe
         p.standardError = pipe
@@ -273,15 +300,21 @@ final class LoginSession: ObservableObject {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             guard !data.isEmpty else { return }
-            Task { @MainActor [weak self] in self?.consume(data) }
+            Task { @MainActor [weak self] in
+                guard let self = self, self.attempt == currentAttempt, self.isRunning else { return }
+                self.consume(data)
+            }
         }
         p.terminationHandler = { [weak self] proc in
             let status = proc.terminationStatus
+            let staging = proc.currentDirectoryURL
             Task { @MainActor [weak self] in
+                defer { if let staging = staging { try? FileManager.default.removeItem(at: staging) } }
                 let rest = pipe.fileHandleForReading.readDataToEndOfFile()
                 pipe.fileHandleForReading.readabilityHandler = nil
-                self?.consume(rest)
-                self?.codexFinished(status: status)
+                guard let self = self, self.attempt == currentAttempt, self.isRunning else { return }
+                self.consume(rest)
+                self.codexFinished(status: status)
             }
         }
         do {
@@ -289,6 +322,8 @@ final class LoginSession: ObservableObject {
             process = p
         } catch {
             phase = .failed(error.localizedDescription)
+            if let staging = stagingDirectory { try? FileManager.default.removeItem(at: staging) }
+            stagingDirectory = nil
         }
     }
 
@@ -306,13 +341,17 @@ final class LoginSession: ObservableObject {
     private func codexFinished(status: Int32) {
         guard !finishedHandled else { return }
         finishedHandled = true
-        if case .cancelled = phase { return }
-        if FileManager.default.fileExists(atPath: directory.appendingPathComponent("auth.json").path) {
-            completeFromDisk()
+        guard isRunning else { return }
+        if status == 0, let staged = stagingDirectory?.appendingPathComponent("auth.json"),
+           let data = try? Data(contentsOf: staged), let auth = try? JSONDecoder().decode(AuthFile.self, from: data),
+           auth.hasLoginCredentials, !Identity(auth: auth).accessTokenExpired {
+            do {
+                try ProfileStore.shared.writeAtomically(data, to: directory.appendingPathComponent("auth.json"), createParent: false)
+                completeFromDisk()
+            } catch { phase = .failed(error.localizedDescription) }
         } else {
             let tail = transcript.split(whereSeparator: \.isNewline).suffix(6).joined(separator: "\n")
             phase = .failed(L.loginExited(Int(status)) + (tail.isEmpty ? "" : "\n" + tail))
-            removeDirectoryIfEmpty()
         }
     }
 
@@ -332,22 +371,14 @@ final class LoginSession: ObservableObject {
         guard isRunning else { return }
         phase = .cancelled
         stopEverything()
-        removeDirectoryIfEmpty()
     }
 
     private func stopEverything() {
+        attempt = UUID()
         process?.terminate()
         process = nil
         browserFlow?.stop()
         browserFlow = nil
-    }
-
-    private func removeDirectoryIfEmpty() {
-        guard createdDirectory else { return }
-        let authURL = directory.appendingPathComponent("auth.json")
-        guard !FileManager.default.fileExists(atPath: authURL.path) else { return }
-        // codex leaves log/ and tmp/ behind; the profile is worthless without auth.json.
-        try? FileManager.default.removeItem(at: directory)
     }
 
     // MARK: Browser / clipboard helpers
@@ -380,7 +411,7 @@ final class LoginSession: ObservableObject {
     func openInPrivateWindow(_ browser: PrivateBrowser) {
         guard let url = currentURL else { return }
         copyCode()
-        browser.open(url)
+        browserOpenError = browser.open(url) ? nil : L.loginPrivateOpenFailed
     }
 
     static let securitySettingsURL = "https://chatgpt.com/#settings/Security"
@@ -636,6 +667,7 @@ struct LoginView: View {
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             openButtons()
+            if let error = session.browserOpenError { Text(error).font(.caption).foregroundStyle(.red) }
             Text(url)
                 .font(.system(size: 10, design: .monospaced))
                 .foregroundStyle(.secondary)

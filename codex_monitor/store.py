@@ -148,6 +148,50 @@ def main_profile() -> Optional[Profile]:
     return _load("main", paths.codex_home(), True)
 
 
+def same_login(left: Profile, right: Profile) -> bool:
+    if not left.account_id or left.account_id != right.account_id:
+        return False
+    user, other = left.ident.get("user_id"), right.ident.get("user_id")
+    if user and other:
+        return user == other
+    email = left.ident.get("email", "").strip().casefold()
+    return bool(email and email == right.ident.get("email", "").strip().casefold())
+
+
+def display_profiles(items: List[Profile]) -> List[Profile]:
+    def priority(profile):
+        expiry = profile.ident.get("access_expires")
+        date = profile.ident.get("last_refresh") or profile.file_mtime() or datetime.min.replace(tzinfo=timezone.utc)
+        return (bool(expiry and expiry < datetime.now(timezone.utc)),
+                datetime.max.replace(tzinfo=timezone.utc) - date, profile.name)
+
+    users = {}
+    for profile in items:
+        email = profile.ident.get("email", "").strip().casefold()
+        user = profile.ident.get("user_id")
+        if profile.account_id and email and user:
+            users.setdefault((profile.account_id, email), set()).add(user)
+    result, positions = [], {}
+    for profile in items:
+        email = profile.ident.get("email", "").strip().casefold()
+        user = profile.ident.get("user_id")
+        known = users.get((profile.account_id, email), set())
+        if not user and len(known) == 1:
+            user = next(iter(known))
+        if not profile.account_id or not (user or email):
+            result.append(profile)
+            continue
+        key = (profile.account_id, "user:" + user if user else "email:" + email)
+        if key not in positions:
+            positions[key] = len(result)
+            result.append(profile)
+        else:
+            index = positions[key]
+            if priority(profile) < priority(result[index]):
+                result[index] = profile
+    return result
+
+
 def profiles() -> List[Profile]:
     root = paths.accounts_dir()
     if not root.is_dir():

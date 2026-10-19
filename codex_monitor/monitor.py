@@ -558,12 +558,14 @@ class Monitor:
                 if store.has_stored_credentials(directory):
                     raise StoreError(f"account '{name}' already exists")
             flow = BrowserLogin(directory) if mode == "browser" else DeviceCodeLogin(directory)
+            directory.mkdir(parents=True, exist_ok=True, mode=0o700)
             self.login, self.login_name, self.login_mode, self.login_relogin = flow, name, mode, relogin
             flow.start()
             if flow.phase == "failed":
                 self.note(f"login failed for '{name}': {flow.error}")
             else:
                 self.note(f"login started for '{name}' ({mode})")
+            self.reload_profiles()
             return self.login_status()
 
     def login_status(self) -> dict:
@@ -588,6 +590,7 @@ class Monitor:
             name = browsers.open_private(url)
             if name:
                 return name
+            raise StoreError("Could not open an isolated private browser. Install a supported browser or copy the login URL.")
         return "default browser" if browsers.open_default(url) else "none"
 
     def cancel_login(self) -> None:
@@ -599,6 +602,7 @@ class Monitor:
             self.login_name = None
             self.login_mode = None
             self.login_relogin = False
+            self.reload_profiles()
 
     def finish_login_if_done(self) -> None:
         """Called by the web layer after a successful login so the new account shows up."""
@@ -659,6 +663,13 @@ class Monitor:
                         pass
                 accounts.append(account)
             accounts.sort(key=account_order)
+            profiles = {p.name: p for p in store.profiles()}
+            representatives = {p.name for p in store.display_profiles([profiles[a["name"]] for a in accounts if a["name"] in profiles])}
+            for account in accounts:
+                account["duplicate_of"] = None
+                if account["name"] in profiles and account["name"] not in representatives:
+                    profile = profiles[account["name"]]
+                    account["duplicate_of"] = next((p.name for p in profiles.values() if p.name in representatives and store.same_login(p, profile)), None)
             data = {
                 "version": __version__,
                 "now": now,

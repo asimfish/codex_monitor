@@ -360,6 +360,10 @@ let unknown2 = displayFixture("g", account: nil, user: nil, email: nil, age: 10)
 check(ProfileStore.displayProfiles([unknown1, unknown2]).count == 2, "unknown identities remain separate")
 check(ProfileStore.displayProfiles([aliasNew, aliasOld]).map(\.id) == ["b"], "selection independent of input order")
 check(ProfileStore.displayProfiles([]).isEmpty, "empty display list")
+let legacyAlias = displayFixture("legacy", account: "workspace", user: nil, email: " A@EXAMPLE.COM ", age: 5)
+check(ProfileStore.displayProfiles([aliasOld, legacyAlias]).count == 1, "mixed user-id/email credentials merge the same login")
+let conflictingUser = displayFixture("conflict", account: "workspace", user: "other-user", email: "a@example.com", age: 6)
+check(ProfileStore.displayProfiles([aliasOld, conflictingUser, legacyAlias]).count == 3, "ambiguous email cannot merge different users")
 
 // Local logout removes all aliases, but keeps unrelated accounts and non-auth files.
 let logoutA = store.accountsRoot.appendingPathComponent("logout-a/auth.json")
