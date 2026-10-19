@@ -138,15 +138,16 @@ git rev-parse HEAD
 
 #### 复现一个确定的源码版本
 
-下面锁定到包含新版网页布局与登录恢复、原生标签增删改、重复存档删除和账号重命名功能的 `3e2d2ac` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
+下面锁定到包含独立隐身登录、取消后账号保留、重复显示修复、原生标签增删改、存档删除和账号重命名功能的 `abffefb` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 3e2d2ac4f05ee408782843f11cbfbd5dd2997ec6
+git checkout --detach abffefb280a6cc404712ca3a6993dd3c13805377
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
+bash tests/run_login_tests.sh
 python3 tests/test_removal.py
 python3 tests/test_rename.py
 bash scripts/build.sh
@@ -210,6 +211,10 @@ codex-monitor autostart install   # 开机自启：LaunchAgent / systemd 用户�
 
 **网页重命名：**卡片右上角 `⋯` → **重命名账号…** → 输入新名称。登录、标签和卡片展开状态会保留，刷新网页后仍生效。正在登录时须先完成或取消登录。两端使用相同账号目录时，悬窗会自动读到新名称。
 
+**登录与取消：**悬窗和网页的隐身按钮每次使用独立的临时浏览器配置，不会沿用上一次隐身窗口的登录。完成后可关闭该登录浏览器。网页隐身打开失败会明确提示，不会自动改用普通窗口。新增账号登录取消或失败后保留未登录行，可继续重新登录；取消重新登录会保留原凭证和标签。不需要的空账号请主动选择“删除账号”。
+
+**重复存档：**悬窗和网页对同一工作区、同一用户默认只显示一项，优先采用未过期、较新的凭证。旧凭证缺少用户 ID 时，只在邮箱对应的已知用户唯一时按邮箱匹配。原文件保留。网页勾选列表上方的 **显示重复存档**，即可逐个重命名或删除；原生悬窗从 **管理账号** 查看全部存档。同邮箱的不同工作区、不同用户 ID 或身份未知的账号仍分别保留。
+
 同样的事在终端里：
 
 ```bash
@@ -264,7 +269,7 @@ bash scripts/install-linux.sh
 
 ### 3.3 验证范围与下载
 
-[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `3e2d2ac` 或更新代码、且显示成功的运行。检查范围如下：
+[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `abffefb` 或更新代码、且显示成功的运行。检查范围如下：
 
 | 检查 | 已验证环境 | 不代表什么 |
 |---|---|---|
@@ -357,7 +362,7 @@ Codex Monitor 不会按计划刷新 token，也从不改写一份*还能用*的 
 
 **登录流程**
 
-浏览器模式复刻了 Codex CLI 自己的 OAuth 客户端：同一个 `client_id`、`redirect_uri=http://localhost:1455/auth/callback`、S256 PKCE、表单编码的 `POST https://auth.openai.com/oauth/token`。App 自己起回调监听，并写出与 Codex 完全一致格式的 `auth.json`。设备码模式运行 `codex login --device-auth`，从输出里解析链接和代码。Python 命令行和网页的设备码流程使用临时 `CODEX_HOME`，只有登录成功并校验凭证后才写入账号目录；重新登录失败或取消时保留已有凭证。
+浏览器模式复刻了 Codex CLI 自己的 OAuth 客户端：同一个 `client_id`、`redirect_uri=http://localhost:1455/auth/callback`、S256 PKCE、表单编码的 `POST https://auth.openai.com/oauth/token`。App 自己起回调监听，并写出与 Codex 完全一致格式的 `auth.json`。设备码模式运行 `codex login --device-auth`，从输出里解析链接和代码。原生悬窗、Python 命令行和网页的设备码流程使用临时 `CODEX_HOME`，只有登录成功并校验凭证后才写入账号目录；重新登录失败或取消时保留已有凭证。
 
 ## 7. 🔐 安全说明
 
@@ -385,6 +390,9 @@ tests/linux_smoke.sh    Docker 检查：Linux 安装脚本、已安装服务重�
 tests/test_reset_credits.py  重置卡请求格式、确认、重复/并发保护与额度刷新（伪造响应）
 tests/test_web_regressions.py  导入校验、刷新身份/并发保护、登录完成、别名同步、OAuth 转义及禁止凭证缓存
 tests/test_recovery.py     登录取消与暂存保护、额度更新顺序、凭证副本同步、异常响应及重置请求持久化恢复
+tests/test_login_retention.py  取消后保留账号/凭证/标签、隐身隔离及重复身份边界
+tests/check_browser_isolation.mjs  使用 Python 隐身启动参数实测两个 Chromium Cookie 存储互相独立
+tests/run_login_tests.sh  原生取消竞态与设备码暂存登录，使用模拟响应（macOS）
 tests/test_merge_compat.py  原有 Python 切换返回值与账号命名兼容性
 tests/test_git_policy.py   提交格式、分支保护和运行时数据排除
 tests/test_web_ui.cjs   可选 Playwright 浏览器测试：菜单可见性、凭证过期和重新登录
@@ -399,6 +407,8 @@ node tests/check_web_ui.mjs                                        # Node 24 + C
 python3 tests/test_web_regressions.py
 python3 tests/test_reset_credits.py                                  # 不消耗真实重置卡
 python3 tests/test_recovery.py
+python3 tests/test_login_retention.py
+node tests/check_browser_isolation.mjs
 python3 tests/test_merge_compat.py
 python3 tests/test_git_policy.py
 node tests/test_web_ui.cjs                                           # 需要 Playwright 和 Chromium；可指定 PLAYWRIGHT_MODULE=/path/to/playwright-core

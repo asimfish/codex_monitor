@@ -141,15 +141,16 @@ git rev-parse HEAD
 
 #### Reproduce a specific source version
 
-This pins commit `3e2d2ac`, which includes the updated web dashboard and recovery flows, native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
+This pins commit `abffefb`, which includes isolated private login sessions, cancelled-account retention, duplicate display fixes, native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 3e2d2ac4f05ee408782843f11cbfbd5dd2997ec6
+git checkout --detach abffefb280a6cc404712ca3a6993dd3c13805377
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
+bash tests/run_login_tests.sh
 python3 tests/test_removal.py
 python3 tests/test_rename.py
 bash scripts/build.sh
@@ -213,6 +214,10 @@ The native widget and web dashboard automatically sync saved tags when they use 
 
 **Rename in the web dashboard:** account card `⋯` → **Rename account…** → enter the new name. Login, tags and expansion state survive the rename and page reload. Finish or cancel a pending login first. When both interfaces share the same account store, the native widget picks up the new name automatically.
 
+**Login and cancellation:** each private-window launch in the native widget or web dashboard uses a separate temporary browser profile, so an earlier private login cannot silently choose the account. Close the login browser when finished. The web private-window button reports an error if it cannot open a supported browser; it does not silently open a regular window. Cancelled or failed additions remain as signed-out rows for retry; cancelling re-login preserves existing credentials and tags. Delete an unwanted placeholder explicitly with **Delete account**.
+
+**Duplicate archives:** the native widget and web dashboard show one representative for the same workspace and user, preferring unexpired, newer credentials. Older credentials missing a user ID can match by email when the known user is unambiguous. Files are retained. In the web dashboard, enable **Show duplicate archives** above the cards to rename or delete individual copies; the native widget lists them in **Manage accounts**. The same email in different workspaces, different user IDs or unknown identities stays separate.
+
 The same things from the terminal:
 
 ```bash
@@ -266,7 +271,7 @@ For a headless server, run `codex-monitor serve --no-browser`, forward the dashb
 
 ### 3.3 Verification scope and downloads
 
-[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `3e2d2ac` or newer code. The checks cover:
+[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `abffefb` or newer code. The checks cover:
 
 | Check | Verified environment | Limits |
 |---|---|---|
@@ -359,7 +364,7 @@ Codex Monitor does not refresh tokens on a schedule and never rewrites a *workin
 
 **Login flow**
 
-Browser mode reproduces Codex CLI's own OAuth client: same `client_id`, `redirect_uri=http://localhost:1455/auth/callback`, `S256` PKCE, form-encoded `POST https://auth.openai.com/oauth/token`. The app runs the loopback listener itself and writes an `auth.json` in exactly the shape Codex writes. Device-code mode spawns `codex login --device-auth` and parses the URL and code from its output. The Python CLI/web device-code flow uses a temporary `CODEX_HOME` and publishes valid credentials to the account directory only after successful completion; failed or cancelled re-login keeps existing credentials.
+Browser mode reproduces Codex CLI's own OAuth client: same `client_id`, `redirect_uri=http://localhost:1455/auth/callback`, `S256` PKCE, form-encoded `POST https://auth.openai.com/oauth/token`. The app runs the loopback listener itself and writes an `auth.json` in exactly the shape Codex writes. Device-code mode spawns `codex login --device-auth` and parses the URL and code from its output. The native widget and Python CLI/web device-code flows use a temporary `CODEX_HOME` and publish valid credentials to the account directory only after successful completion; failed or cancelled re-login keeps existing credentials.
 
 ## 7. 🔐 Security notes
 
@@ -387,6 +392,9 @@ tests/linux_smoke.sh    Linux installer, installed dashboard restart/tag persist
 tests/test_reset_credits.py  reset-card HTTP contract, confirmation, replay/concurrency guards and quota refresh (fabricated responses)
 tests/test_web_regressions.py  import validation, refresh identity/concurrency guards, login finalization, alias updates, OAuth escaping and credential cache headers
 tests/test_recovery.py     cancelled/staged login integrity, ordered quota commits, alias token sync, malformed responses and durable reset recovery
+tests/test_login_retention.py  cancelled row/credential/tag retention, private launch isolation and duplicate identity boundaries
+tests/check_browser_isolation.mjs  two real Chromium cookie stores using the Python private-launch flags
+tests/run_login_tests.sh  native cancellation races and staged device login with fabricated responses (macOS)
 tests/test_merge_compat.py  existing Python switch return value and account-name compatibility
 tests/test_git_policy.py   commit format, branch protection and runtime-data exclusion
 tests/test_web_ui.cjs   optional Playwright browser checks: menu visibility, expired credentials and re-login recovery
@@ -401,6 +409,8 @@ node tests/check_web_ui.mjs                                        # Node 24 + C
 python3 tests/test_web_regressions.py
 python3 tests/test_reset_credits.py                                  # no real reset cards consumed
 python3 tests/test_recovery.py
+python3 tests/test_login_retention.py
+node tests/check_browser_isolation.mjs
 python3 tests/test_merge_compat.py
 python3 tests/test_git_policy.py
 node tests/test_web_ui.cjs                                           # requires Playwright + Chromium; optional PLAYWRIGHT_MODULE=/path/to/playwright-core
