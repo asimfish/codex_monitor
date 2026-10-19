@@ -1,6 +1,7 @@
 """UI strings for the web dashboard (English + Chinese; picked from the browser language)."""
 
 EN = {
+    'showAliases': 'Show duplicate archives',
     "accountDirectory": "Account directory name",
     'workspaceEyebrow': 'Workspace · Usage monitor',
     'additionalQuotas': 'Feature quotas',
@@ -208,7 +209,7 @@ EN = {
     "start": "Start",
     "cancel": "Cancel",
     "browserStep": "Sign in with the account to add",
-    "browserHint": "Use a private/incognito window — a normal window silently reuses the ChatGPT account that is already signed in. The browser redirects back to localhost:1455 and this dialog updates by itself. No ChatGPT setting is required.",
+    "browserHint": "The private-window button opens a separate temporary browser session for each launch, without reusing previous logins. The browser redirects back to localhost:1455 and this dialog updates by itself. No ChatGPT setting is required.",
     "openPrivate": "Open in {b} private window",
     "openDefault": "Open in default browser",
     "copyUrl": "Copy login URL",
@@ -235,6 +236,7 @@ EN = {
 }
 
 ZH = {
+    'showAliases': '显示重复存档',
     "accountDirectory": "账号目录名称",
     'workspaceEyebrow': '工作空间 · 用量监控',
     'additionalQuotas': '专项额度',
@@ -442,7 +444,7 @@ ZH = {
     "start": "开始",
     "cancel": "取消",
     "browserStep": "用要添加的 ChatGPT 账号登录",
-    "browserHint": "推荐用隐身/无痕窗口：普通窗口会直接用当前已登录的 ChatGPT 账号。登录完成后浏览器会跳回 localhost:1455，这里会自动更新。不需要在 ChatGPT 里开任何设置。",
+    "browserHint": "隐身按钮每次打开独立的临时浏览器会话，不沿用上次登录。完成后浏览器会跳回 localhost:1455，这里会自动更新。不需要在 ChatGPT 里开任何设置。",
     "openPrivate": "用 {b} 隐身窗口打开",
     "openDefault": "用默认浏览器打开",
     "copyUrl": "复制登录链接",

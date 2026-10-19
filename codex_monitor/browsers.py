@@ -6,6 +6,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tempfile
+import threading
 import webbrowser
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -83,11 +85,24 @@ def open_private(url: str) -> Optional[str]:
     if not found:
         return None
     name, argv = found
+    profile = tempfile.mkdtemp(prefix="codex-monitor-browser-")
+    if name == "Firefox":
+        flags = ["--no-remote", "--profile", profile]
+    else:
+        flags = ["--user-data-dir=" + profile, "--no-first-run", "--no-default-browser-check"]
+    # Wait for this isolated process, not LaunchServices' short-lived `open` helper.
+    if paths.IS_MAC:
+        argv = ["/usr/bin/open", "-W", *argv[1:]]
     try:
-        subprocess.Popen(argv + [url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=not paths.IS_WINDOWS)
+        process = subprocess.Popen(argv + flags + [url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   start_new_session=not paths.IS_WINDOWS)
     except OSError:
+        shutil.rmtree(profile)
         return None
+    def cleanup() -> None:
+        process.wait()
+        shutil.rmtree(profile, ignore_errors=True)
+    threading.Thread(target=cleanup, daemon=True).start()
     return name
 
 

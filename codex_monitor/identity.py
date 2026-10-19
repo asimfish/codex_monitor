@@ -66,6 +66,7 @@ def identity(auth: Optional[dict]) -> dict:
     prof = acc.get("https://api.openai.com/profile") or {}
     return {
         "email": idc.get("email") or prof.get("email") or "",
+        "user_id": a_id.get("chatgpt_user_id") or a_acc.get("chatgpt_user_id") or "",
         "plan": a_id.get("chatgpt_plan_type") or a_acc.get("chatgpt_plan_type") or "",
         "account_id": tokens.get("account_id") or a_id.get("chatgpt_account_id") or a_acc.get("chatgpt_account_id") or "",
         "subscription_until": parse_iso(a_id.get("chatgpt_subscription_active_until")),

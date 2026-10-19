@@ -85,11 +85,19 @@ final class BrowserLoginFlow {
     let pkce = PKCE()
     let state = OAuthCore.randomState()
     private var server: CallbackServer?
+    private let port: UInt16
+    private let exchangeTokens: ((String) async throws -> TokenRefreshResponse)?
+
+    init(port: UInt16 = OAuthConfig.port,
+         exchangeTokens: ((String) async throws -> TokenRefreshResponse)? = nil) {
+        self.port = port
+        self.exchangeTokens = exchangeTokens
+    }
 
     var authorizeURL: URL { OAuthCore.authorizeURL(challenge: pkce.challenge, state: state) }
 
     func start(onCallback: @escaping @MainActor (Result<[String: String], Error>) -> Void) throws {
-        let s = try CallbackServer(port: OAuthConfig.port)
+        let s = try CallbackServer(port: port)
         server = s
         s.start { result in
             Task { @MainActor in onCallback(result) }
@@ -97,6 +105,7 @@ final class BrowserLoginFlow {
     }
 
     func exchange(code: String) async throws -> TokenRefreshResponse {
+        if let exchangeTokens = exchangeTokens { return try await exchangeTokens(code) }
         var req = URLRequest(url: OAuthConfig.issuer.appendingPathComponent("oauth/token"))
         req.httpMethod = "POST"
         req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")

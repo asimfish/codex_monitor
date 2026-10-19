@@ -286,6 +286,10 @@ const render = s => {
   const focused = document.activeElement?.closest('#accounts button, #filters button, #overview button, #accounts summary');
   const focusData = focused ? {...focused.dataset, account:focused.closest('[data-account]')?.dataset.account, detail:focused.parentElement?.dataset.detail} : null;
   STATE = s;
+  const showAliases=document.getElementById('showAliases');
+  showAliases.checked=prefs.getItem('cm_show_aliases')==='1';
+  document.getElementById('showAliasesLabel').textContent=t('showAliases');
+  const accounts=s.accounts.filter(a=>showAliases.checked||!a.duplicate_of);
   document.documentElement.lang = LANG==='zh'?'zh-CN':'en';
   document.title = 'Codex Monitor · '+t('dashboardTitle');
   document.getElementById('eyebrow').textContent = t('workspaceEyebrow');
@@ -309,13 +313,13 @@ const render = s => {
   document.getElementById('retryConnection').textContent=t('retry');
   const search = document.getElementById('search'); search.placeholder=t('searchAccounts'); search.setAttribute('aria-label',t('searchAccounts'));
   document.getElementById('lang').setAttribute('aria-label',t('language'));
-  const ready=s.accounts.filter(a=>a.availability==='ready').length, limited=s.accounts.filter(a=>a.availability==='limited').length, issues=s.accounts.filter(attention).length;
-  const stats=[[s.accounts.length,t('totalAccounts'),'all'],[ready,t('usableAccounts'),'ready'],[limited,t('limitedAccounts'),'limited'],[issues,t('needsAttention'),'attention']];
+  const ready=accounts.filter(a=>a.availability==='ready').length, limited=accounts.filter(a=>a.availability==='limited').length, issues=accounts.filter(attention).length;
+  const stats=[[accounts.length,t('totalAccounts'),'all'],[ready,t('usableAccounts'),'ready'],[limited,t('limitedAccounts'),'limited'],[issues,t('needsAttention'),'attention']];
   document.getElementById('overview').innerHTML=stats.map(([n,label,cl])=>`<button class="stat ${cl} ${currentFilter===cl?'selected':''}" data-act="filter" data-filter="${cl}" aria-pressed="${currentFilter===cl}"><b>${n}</b><span>${label}</span></button>`).join('');
-  const filterDefs=[['all',t('filterAll'),s.accounts.length],['ready',t('filterReady'),ready],['limited',t('filterLimited'),limited],['attention',t('filterAttention'),issues],['tagged',t('filterTagged'),s.accounts.filter(a=>a.tags.length).length]];
+  const filterDefs=[['all',t('filterAll'),accounts.length],['ready',t('filterReady'),ready],['limited',t('filterLimited'),limited],['attention',t('filterAttention'),issues],['tagged',t('filterTagged'),accounts.filter(a=>a.tags.length).length]];
   document.getElementById('filters').innerHTML=filterDefs.map(([key,label,n])=>`<button class="filter ${key===currentFilter?'selected':''}" data-act="filter" data-filter="${key}" aria-pressed="${key===currentFilter}">${label}<span class="count">${n}</span></button>`).join('');
   const query=search.value.trim().toLowerCase();
-  const matches=s.accounts.filter(a=>[a.name,a.display_name,a.plan_label,...a.tags].join(' ').toLowerCase().includes(query)).filter(a=>currentFilter==='all'||(currentFilter==='ready'&&a.availability==='ready')||(currentFilter==='attention'&&attention(a))||(currentFilter==='limited'&&a.availability==='limited')||(currentFilter==='tagged'&&a.tags.length));
+  const matches=accounts.filter(a=>[a.name,a.display_name,a.plan_label,...a.tags].join(' ').toLowerCase().includes(query)).filter(a=>currentFilter==='all'||(currentFilter==='ready'&&a.availability==='ready')||(currentFilter==='attention'&&attention(a))||(currentFilter==='limited'&&a.availability==='limited')||(currentFilter==='tagged'&&a.tags.length));
   const nextReset=a=>Math.min(...(a.windows||[]).map(w=>w.reset_at?Date.parse(w.reset_at):Infinity));
   if(sortMode!=='ready')matches.sort((a,b)=>sortMode==='name'?a.display_name.localeCompare(b.display_name):sortMode==='quota'?(b.tightest_remaining??-1)-(a.tightest_remaining??-1):nextReset(a)-nextReset(b));
   document.getElementById('sortHint').textContent=t(sortMode==='ready'?'usableFirst':'sort'+sortMode);
@@ -332,6 +336,7 @@ const render = s => {
   document.getElementById('log').textContent=(s.log||[]).join('\n')||t('noEvents');
 };
 document.getElementById('search').addEventListener('input',()=>{if(STATE)render(STATE)});
+document.getElementById('showAliases').onchange=ev=>{prefs.setItem('cm_show_aliases',ev.target.checked?'1':'0');if(STATE)render(STATE)};
 const tick = () => {
   if(statePoll)return statePoll;
   statePoll = pollState().finally(()=>{statePoll=null});

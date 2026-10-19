@@ -372,6 +372,9 @@ class StoreAndWebTests(unittest.TestCase):
             shutil.rmtree(directory)
 
     def test_cancel_login_returns_idle_so_add_form_is_reusable(self):
+        import shutil
+        for name in ("probe", "fresh"):
+            self.addCleanup(lambda name=name: shutil.rmtree(paths.accounts_dir() / name, ignore_errors=True))
         class Flow:
             phase = "waiting"
             error = None

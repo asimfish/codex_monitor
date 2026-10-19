@@ -103,7 +103,7 @@ extension L {
 
     // Browser flow
     static let loginBrowserStep1 = "在浏览器里用要添加的 ChatGPT 账号登录"
-    static let loginBrowserHint = "推荐用隐身/无痕窗口打开：普通窗口会直接用当前已登录的 ChatGPT 账号。登录完成后页面会跳回本机 localhost:1455，这里会自动变成「登录成功」。这一步不需要在 ChatGPT 里开启任何设置。"
+    static let loginBrowserHint = "隐身按钮每次打开独立的临时浏览器会话，不会沿用上次的登录。登录完成后页面会跳回本机 localhost:1455，这里会自动变成「登录成功」。这一步不需要在 ChatGPT 里开启任何设置。"
     static let loginBrowserWaiting = "等待浏览器完成登录…"
     static let loginExchanging = "已收到授权回调，正在换取 token…"
 

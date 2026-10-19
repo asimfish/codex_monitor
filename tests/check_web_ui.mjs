@@ -109,6 +109,11 @@ try {
   await call('Page.navigate', {url});
   await until(() => evaluate("document.querySelectorAll('.card[data-account]').length===9"), 'account cards');
   assert.deepEqual(await evaluate("[...document.querySelectorAll('.card')].slice(0,3).map(el=>el.dataset.account)"), ['erin', 'alice', 'bob']);
+  await evaluate("render({...STATE, accounts:[...STATE.accounts,{...STATE.accounts.find(a=>a.name==='alice'),name:'alice-alias',duplicate_of:'alice'}]})");
+  assert.equal(await evaluate("document.querySelectorAll('.card[data-account]').length"), 9, 'Duplicate aliases hidden by default');
+  await evaluate("document.getElementById('showAliases').click()");
+  assert.equal(await evaluate("document.querySelectorAll('.card[data-account]').length"), 10, 'All archives available for deletion/renaming');
+  await evaluate("document.getElementById('showAliases').click(); render({...STATE, accounts:STATE.accounts.filter(a=>a.name!=='alice-alias')})");
   const alice = "document.querySelector('[data-account=alice]')";
   const text = await evaluate(alice + '.innerText');
   for (const label of ['重置次数', '订阅到期', '凭证有效期', '余额', '12.50']) assert.ok(text.includes(label), 'Missing detail: ' + label);
