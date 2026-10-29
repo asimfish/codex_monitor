@@ -285,8 +285,8 @@ not change the active account. The native window uses the installed
 2. Click **Add API account**, paste the Admin key, and choose **Verify & add**
    (「验证并添加」). The account name is optional. The panel makes a read-only
    official Costs request using Bearer authentication: no extra OAuth login,
-   terminal command, or model request is needed. It detects the organization ID
-   from the response when available, saves only after successful verification,
+   terminal command, or model request is needed. It recognizes organization IDs and response aliases, saves only after
+   successful verification,
    and shows the first reported costs immediately. Failed verification creates
    no record and preserves the old key when editing.
 3. You can stop here: costs default to the **current calendar month in UTC**,
@@ -298,10 +298,22 @@ not change the active account. The native window uses the installed
    Leave the total blank when unknown. The first grant may be prorated; actual
    grant validity can differ from the calendar month.
 
+The official Admin keys, organization settings and billing buttons open a
+**regular browser window**, retaining its existing sign-in. They use the
+persistent browser profile and do not reuse the temporary private Codex login
+session. If accessing a remote server through SSH forwarding, copy the official
+link into a regular browser on your own computer instead; the button launches
+a browser on the computer running the panel.
+
 **Advanced** lets you enter an organization ID (`org-...`) and change the
 refresh interval (60–3600 seconds). If a successful response omits the ID,
 copy it from [official organization settings](https://platform.openai.com/settings/organization/general)
-and retry. Keep one record per organization, even with several project keys.
+and retry. Response aliases are shown as organization information and are
+never sent back as organization-ID headers. Explicit IDs remain checked for
+contradictions. When a response provides only an alias, the Admin key determines
+the query scope; aliases are not assumed to be globally unique. Enter the actual
+organization ID to deduplicate different keys for the same organization.
+The same saved Admin key cannot be added twice.
 To track a grant before obtaining an Admin key, select **Save a manual record**,
 enter the organization ID under Advanced, and optionally add grant details.
 
