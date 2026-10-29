@@ -331,6 +331,15 @@ class ApiCreditTests(unittest.TestCase):
         self.assertEqual(len(self.manager.snapshot()["accounts"]), 2)
         self.assertEqual(self.manager.path.read_bytes(), before)
 
+    def test_display_aliases_are_not_restricted_to_identifier_characters(self):
+        for alias in ("research+team@example.test", "Research (personal)", "Équipe API"):
+            stream = io.BytesIO(b'{"data":[],"has_more":false}')
+            stream.headers = {"openai-organization": alias}
+            opener = Mock(); opener.open.return_value = stream
+            with self.subTest(alias=alias), patch.object(api_credits.urllib.request, "build_opener", return_value=opener):
+                result = api_credits.fetch_costs(KEY, "", self.now-timedelta(days=1), self.now)
+            self.assertEqual(result["organization"], alias)
+
     def test_settings_launch_a_regular_window_only(self):
         process = Mock()
         with patch.object(browsers, "find_regular_browser", return_value=("Google Chrome", ["chrome", "--new-window"])), patch.object(browsers.subprocess, "Popen", return_value=process) as launch, patch.object(browsers, "open_private") as private:

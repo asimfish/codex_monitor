@@ -34,8 +34,10 @@ def is_org_id(value):
 
 
 def organization_alias(value):
-    if isinstance(value, str) and not value.startswith("sk-") and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_. -]{0,254}", value):
-        return value
+    if isinstance(value, str):
+        alias = value.strip()
+        if 1 <= len(alias) <= 255 and alias.isprintable() and not alias.startswith("sk-"):
+            return alias
     return None
 
 
@@ -85,8 +87,10 @@ def fetch_costs(key, organization, start, end):
                     if observed_org and observed_org != response_org:
                         raise store.StoreError("Cost response organization does not match the selected ID. Clear the organization ID in Advanced to use the key's organization; nothing was saved")
                     observed_org = response_org
-                elif organization_alias(response_org):
-                    observed_alias = response_org
+                else:
+                    alias = organization_alias(response_org)
+                    if alias:
+                        observed_alias = alias
                 raw = response.read(4 * 1024 * 1024 + 1)
                 if len(raw) > 4 * 1024 * 1024:
                     raise store.StoreError("Cost response exceeds the supported size")
