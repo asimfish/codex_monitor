@@ -51,6 +51,13 @@ try{
   assert(await evaluate(`document.querySelector('[data-id="${connected}"]').innerText.includes('3.25')`),'First costs appear immediately');
   assert(await evaluate(`document.querySelector('[data-id="${connected}"]').innerText.includes('本月已报告费用')`),'Calendar costs are not presented as grant expiry');
   assert.equal(await evaluate(`document.querySelector('[data-id="${connected}"] .api-money').textContent`),'—','Unknown grant never becomes a fabricated balance');
+  assert(await evaluate(`document.querySelector('[data-id="${connected}"]').innerText.includes('尚未填写赠送总额')`),'Unknown balance has a specific explanation');
+  await evaluate(`document.querySelector('[data-id="${connected}"] button[data-act=grant]').click()`);
+  assert(await evaluate("document.getElementById('apiHasGrant').checked"),'Grant shortcut opens the right section');
+  assert.equal(await evaluate("document.getElementById('apiKey').value"),'','Saved key remains private');
+  assert.equal(await evaluate("document.getElementById('apiStart').value"),'','Reporting-month dates must not be invented as grant dates');
+  assert.equal(await evaluate("document.getElementById('apiEnd').value"),'');
+  await evaluate("document.getElementById('cancelApi').click()");
   await evaluate(`document.querySelector('[data-id="${connected}"] button[data-act=edit]').click()`);
   assert.equal(await evaluate("document.getElementById('apiOrg').value"),'','Alias is not prefilled as an organization ID');
   await fill('apiLabel','Alias account edited');await evaluate("document.getElementById('apiForm').requestSubmit()");

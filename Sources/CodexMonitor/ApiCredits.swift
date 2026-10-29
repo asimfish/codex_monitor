@@ -18,6 +18,16 @@ struct ApiCreditAccount: Decodable, Identifiable {
     let expired: Bool
     let stale: Bool
     let costs: ApiReportedCosts?
+
+    var needsGrantDetails: Bool { grantTotal == nil || periodMode == "calendar_month" }
+    var primaryCaption: String { estimatedRemaining != nil ? "估算剩余" : (periodMode == "calendar_month" ? "本月费用" : "已报告费用") }
+    var primaryAmount: String? { estimatedRemaining ?? costs?.costUsd }
+    var grantHint: String {
+        if needsGrantDetails { return "赠送额度未填写；补充实际金额和有效期后可估算余额" }
+        if expired { return "赠送已到期，请核对新账期" }
+        if costs == nil { return "已录入额度，等待费用同步后估算余额" }
+        return "估算余额并非官方余额"
+    }
 }
 
 struct ApiReportedCosts: Decodable {
@@ -30,13 +40,30 @@ struct ApiCreditSnapshot: Decodable {
 
 @MainActor
 final class ApiCreditModel: ObservableObject {
+    static let shared = ApiCreditModel()
     private let command: URL
+    private var polling: Task<Void, Never>?
     init(command: URL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/codex-monitor")) {
         self.command = command
     }
     @Published var accounts: [ApiCreditAccount] = []
     @Published var busy = false
     @Published var error: String?
+
+    func start() {
+        guard polling == nil else { return }
+        if DemoData.enabled {
+            accounts = DemoData.apiAccounts()
+            return
+        }
+        polling = Task { [weak self] in
+            await self?.run()
+            while !Task.isCancelled {
+                await self?.run("poll")
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+            }
+        }
+    }
 
     func run(_ action: String = "list", id: String? = nil, body: [String: Any]? = nil) async {
         guard !busy else { return }
@@ -93,9 +120,12 @@ final class ApiCreditModel: ObservableObject {
 }
 
 @MainActor
-final class ApiCreditsController {
+final class ApiCreditsController: ObservableObject {
     static let shared = ApiCreditsController()
     private var window: NSWindow?
+    @Published var editing: ApiCreditAccount?
+    @Published var showEditor = false
+    var startWithGrant = false
 
     func previewIfRequested() {
         guard DemoData.enabled, let path = ProcessInfo.processInfo.environment["CODEX_MONITOR_API_SNAPSHOT"] else { return }
@@ -108,14 +138,19 @@ final class ApiCreditsController {
             NSApp.terminate(nil)
         }
     }
-    func open() {
+    func open(editing account: ApiCreditAccount? = nil, grant: Bool = false) {
+        if showEditor {
+            window?.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
         if let window = window {
             window.makeKeyAndOrderFront(nil)
         } else {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 740, height: 640),
                                   styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             window.title = "OpenAI API 额度"
-            let hosting = NSHostingView(rootView: ApiCreditsView())
+            let hosting = NSHostingView(rootView: ApiCreditsView(controller: self))
             hosting.sizingOptions = []
             window.contentView = hosting
             window.isReleasedWhenClosed = false
@@ -124,23 +159,78 @@ final class ApiCreditsController {
             window.makeKeyAndOrderFront(nil)
             self.window = window
         }
+        if let account = account {
+            editing = account
+            startWithGrant = grant
+            showEditor = true
+        }
         NSApp.activate(ignoringOtherApps: true)
     }
 }
 
-private func apiMoney(_ value: String?) -> String {
+func apiMoney(_ value: String?) -> String {
     guard let value = value, let decimal = Decimal(string: value) else { return "—" }
     return NSDecimalNumber(decimal: decimal).doubleValue.formatted(.currency(code: "USD"))
 }
 
-private func apiDate(_ value: String?) -> String {
+func apiDate(_ value: String?) -> String {
     value.flatMap(ISO8601.parse).map { Fmt.dateTime.string(from: $0) } ?? "—"
 }
 
+struct ApiCreditWidgetSection: View {
+    @ObservedObject var model: ApiCreditModel
+    @AppStorage("apiAccountsExpanded") private var expanded = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Button { expanded.toggle() } label: {
+                    Label("API 账号（\(model.accounts.count)）", systemImage: expanded ? "chevron.down" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                }.buttonStyle(.plain)
+                Spacer()
+                if model.busy { ProgressView().controlSize(.mini) }
+                Button("管理") { ApiCreditsController.shared.open() }.buttonStyle(.link).font(.caption)
+            }.padding(.horizontal, 4)
+            if expanded {
+                if model.accounts.isEmpty {
+                    Text("暂无 API 账号，点管理添加").font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
+                }
+                ForEach(model.accounts) { account in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(account.label).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                            Spacer(minLength: 8)
+                            Text(account.primaryCaption).font(.caption2).foregroundStyle(.secondary)
+                            Text(apiMoney(account.primaryAmount)).font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        }
+                        Text(account.grantHint).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        HStack {
+                            Text("同步：\(apiDate(account.lastSuccess))").font(.system(size: 9)).foregroundStyle(.secondary)
+                            Spacer(minLength: 4)
+                            Button(account.needsGrantDetails ? "补充额度" : "编辑") {
+                                ApiCreditsController.shared.open(editing: account, grant: account.needsGrantDetails)
+                            }.buttonStyle(.link).font(.caption)
+                            Button { Task { await model.run("refresh", id: account.id) } } label: {
+                                Image(systemName: "arrow.clockwise")
+                            }.buttonStyle(.plain).help("刷新 API 费用").disabled(!account.hasAdminKey || model.busy)
+                        }
+                        if let error = account.error { Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2) }
+                        else if account.stale { Text("旧数据或尚未同步").font(.caption2).foregroundStyle(.orange) }
+                    }
+                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+                }
+                if let error = model.error { Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2) }
+            }
+        }
+        .accessibilityIdentifier("api-account-section")
+    }
+}
+
 private struct ApiCreditsView: View {
-    @StateObject private var model = ApiCreditModel()
-    @State private var editing: ApiCreditAccount?
-    @State private var showEditor = false
+    @ObservedObject private var model = ApiCreditModel.shared
+    @ObservedObject var controller: ApiCreditsController
     @State private var removing: ApiCreditAccount?
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -149,7 +239,7 @@ private struct ApiCreditsView: View {
                 Spacer()
                 if model.busy { ProgressView().controlSize(.small) }
                 Button("刷新费用") { Task { await model.run("refresh") } }
-                Button("添加 API 账号") { editing = nil; showEditor = true }
+                Button("添加 API 账号") { controller.editing = nil; controller.startWithGrant = false; controller.showEditor = true }
             }
             Text("总额和账期需照官方账单填写；Admin Key 自动查询组织费用。估算剩余不是官方余额，可能受折扣、其他赠送和统计延迟影响。到期后请更新实际到账的新额度。")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -165,9 +255,12 @@ private struct ApiCreditsView: View {
                                     Text(account.organization).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
-                                Button("编辑") { editing = account; showEditor = true }
+                                Button(account.needsGrantDetails ? "补充额度" : "编辑") {
+                                    controller.editing = account; controller.startWithGrant = account.needsGrantDetails; controller.showEditor = true
+                                }
                                 Button("移除", role: .destructive) { removing = account }
                             }
+                            Text(account.grantHint).font(.caption).foregroundStyle(.secondary)
                             HStack(spacing: 25) {
                                 metric("录入总额", apiMoney(account.grantTotal))
                                 metric(account.periodMode == "calendar_month" ? "本月已报告费用" : "已报告费用", apiMoney(account.costs?.costUsd))
@@ -189,14 +282,8 @@ private struct ApiCreditsView: View {
                 .font(.caption)
         }
         .padding(20).background(Color(nsColor: .windowBackgroundColor)).disabled(model.busy)
-        .task {
-            await model.run("poll")
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
-                if !Task.isCancelled { await model.run("poll") }
-            }
-        }
-        .sheet(isPresented: $showEditor) { ApiCreditEditor(account: editing, model: model) }
+        .onAppear { model.start() }
+        .sheet(isPresented: $controller.showEditor) { ApiCreditEditor(account: controller.editing, model: model, startWithGrant: controller.startWithGrant) }
         .alert("移除此 API 记录和保存的 Admin Key？", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             Button("取消", role: .cancel) { removing = nil }
             Button("移除", role: .destructive) {
@@ -214,6 +301,7 @@ private struct ApiCreditsView: View {
 private struct ApiCreditEditor: View {
     let account: ApiCreditAccount?
     @ObservedObject var model: ApiCreditModel
+    var startWithGrant = false
     @Environment(\.dismiss) private var dismiss
     @State private var label = ""
     @State private var organization = ""
@@ -284,10 +372,12 @@ private struct ApiCreditEditor: View {
             model.error = nil
             label = account?.label ?? ""; organization = account.flatMap { $0.organization.hasPrefix("org-") ? $0.organization : nil } ?? ""; total = account?.grantTotal ?? ""
             if let account = account {
-                start = ISO8601.parse(account.periodStart) ?? Date()
-                end = ISO8601.parse(account.periodEnd) ?? Date()
+                if account.periodMode == "custom" {
+                    start = ISO8601.parse(account.periodStart) ?? Date()
+                    end = ISO8601.parse(account.periodEnd) ?? Date()
+                }
                 interval = account.refreshInterval
-                hasGrant = account.periodMode == "custom"
+                hasGrant = account.periodMode == "custom" || startWithGrant
                 manual = !account.hasAdminKey
                 advanced = manual
             }

@@ -141,12 +141,12 @@ git rev-parse HEAD
 
 #### Reproduce a specific source version
 
-This pins commit `452b7b4`, which includes API organization credit tracking, isolated private login sessions, cancelled-account retention, duplicate display fixes, native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
+This pins commit `3f0cf4e`, which includes the native API account category, simplified Admin Key setup, organization aliases and regular browser settings windows, alongside isolated private logins, cancelled-account retention, native tag editing and account management. It builds/tests in a new directory without replacing the installed application:
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 452b7b4bfbfd8c97996fb52b0beec9d744305de1
+git checkout --detach 3f0cf4e9ebeb6d4e3b8b34763338d4ac640fc29d
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
@@ -273,7 +273,11 @@ For a headless server, run `codex-monitor serve --no-browser`, forward the dashb
 ### OpenAI API organization credits
 
 Open **API credits** in the web header, or **API 额度管理…** in the macOS
-menu-bar menu/settings menu. API records are separate from Codex logins and do
+menu-bar menu/settings menu. The floating widget and menu-bar account list also
+include a separate **API accounts** category. It shows each API account's
+reported costs or estimated remaining balance, last sync, and refresh/edit
+controls. The widget keeps API and Codex accounts in the same bounded scrolling
+area, with separate category headings. API records are separate from Codex logins and do
 not change the active account. The native window uses the installed
 `~/.local/bin/codex-monitor` helper; rebuild/install the widget after updating.
 
@@ -322,7 +326,15 @@ the key blank when editing to retain it; entering a replacement verifies it
 before saving. Removing an API record removes its local key. Cards show reported
 costs, daily cost breakdown on the web, last successful sync, next scheduled
 refresh, grant expiry when configured, and errors. Automatic polling runs while
-the web service or native API window is open.
+the web service or native app is running; opening the management window is not
+required. The widget and management window share the same API data and editor.
+
+A successful sign-in with reported costs of **$0** does not reveal how many
+credits were granted. If the amount or actual validity period is missing, the
+card states that grant details are unfilled and offers **Add grant details**
+(「补充额度」). This opens the matching account's grant fields without asking
+for its saved key. Enter the actual billing dates; the reporting month is not
+prefilled as a grant validity period.
 
 **Estimated balance = entered grant total − organization reported costs.** It
 is not the official grant balance: discounts, other grants, billing adjustments
@@ -349,7 +361,7 @@ promotional grant balance is not established by the documentation used here.
 
 ### 3.3 Verification scope and downloads
 
-[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `452b7b4` or newer code. The checks cover:
+[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `3f0cf4e` or newer code. The checks cover:
 
 | Check | Verified environment | Limits |
 |---|---|---|
