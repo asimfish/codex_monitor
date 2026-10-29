@@ -107,7 +107,9 @@ final class ApiCreditsController {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 740, height: 640),
                                   styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
             window.title = "OpenAI API 额度"
-            window.contentView = NSHostingView(rootView: ApiCreditsView())
+            let hosting = NSHostingView(rootView: ApiCreditsView())
+            hosting.sizingOptions = []
+            window.contentView = hosting
             window.isReleasedWhenClosed = false
             window.minSize = NSSize(width: 530, height: 400)
             window.center()
