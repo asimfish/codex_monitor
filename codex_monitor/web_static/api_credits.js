@@ -52,7 +52,7 @@ const words={
     incomplete:'Some amounts are unknown; no combined balance is inferred.',
     setupTitle:'Connect in two steps',
     setupSteps:'1. Create an Admin key in the official dashboard. 2. Paste it here and choose Verify & add.',
-    createKey:'Open official Admin keys ↗',
+    createKey:'Open Admin keys in a regular browser ↗',
     ownerHint:'Select the API organization that received your credits. If this page is unavailable, check that you are an organization owner.',
     manualMode:'Save a manual record without an Admin key',
     hasGrant:'Add grant amount and actual validity dates (optional)',
@@ -121,7 +121,7 @@ const words={
     incomplete:'部分金额未知，不推算汇总余额。',
     setupTitle:'两步完成配置',
     setupSteps:'1. 在官方后台创建 Admin Key。2. 粘贴到这里，点击「验证并添加」。',
-    createKey:'打开官方 Admin Keys 创建页面 ↗',
+    createKey:'用普通浏览器打开 Admin Keys 创建页面 ↗',
     ownerHint:'先切换到领取额度的 API 组织。看不到此页面时，请确认你是该组织的 Owner（所有者）。',
     manualMode:'暂不配置 Admin Key，仅保存手工记录',
     hasGrant:'补充赠送金额和实际有效期（可之后再填）',
@@ -139,7 +139,7 @@ const words={
     missingOrg:'Key 已验证，但没有返回组织 ID。请展开高级设置，从官方设置复制 org-… ID 后重试。'
   }
 };
-const friendly=message=>language==='zh'?(message.includes('invalid or expired')?t('auth401'):message.includes('(403)')?t('auth403'):message.includes('ID was not returned')?t('missingOrg'):message):message;
+const friendly=message=>language==='zh'?(message.includes('invalid or expired')?t('auth401'):message.includes('(403)')?t('auth403'):message.includes('does not match')?'返回的组织 ID 与所选组织不一致。请清空高级设置中的组织 ID 后重试；本次未保存。':message.includes('ID was not returned')?t('missingOrg'):message.includes('regular browser window')?'无法打开普通浏览器，请复制此链接到自己的普通浏览器窗口。':message):message;
 let language=query.get('lang')==='zh'?'zh':(navigator.language.startsWith('zh')?'zh':'en'), state={accounts:[]}, polling=false;
 const t=key=>words[language][key], el=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -170,11 +170,16 @@ const updateForm=()=>{
   el('saveApi').textContent=t(el('apiKey').value.trim()||(!el('apiId').value&&!manual)?(el('apiId').value?'verifyEdit':'verifySave'):'save');
 };
 const edit=account=>{
-  el('apiForm').reset();el('apiId').value=account?.id||'';el('apiLabel').value=account?.label||'';el('apiOrg').value=account?.organization||'';el('apiGrant').value=account?.grant_total??'';el('apiInterval').value=account?.refresh_interval||300;
+  el('apiForm').reset();el('apiId').value=account?.id||'';el('apiLabel').value=account?.label||'';el('apiOrg').value=/^org-[A-Za-z0-9_-]{1,120}$/.test(account?.organization||'')?account.organization:'';el('apiGrant').value=account?.grant_total??'';el('apiInterval').value=account?.refresh_interval||300;
   el('apiHasGrant').checked=!!account&&account.period_mode!=='calendar_month';el('apiManual').checked=!!account&&!account.has_admin_key;
   el('apiStart').value=account?local(account.period_start):'';el('apiEnd').value=account?local(account.period_end):'';el('apiAdvanced').open=el('apiManual').checked;
   el('apiKey').value='';el('apiFormError').textContent='';el('apiDialogTitle').textContent=t('formTitle');document.querySelectorAll('[data-text]').forEach(node=>node.textContent=t(node.dataset.text));updateForm();el('apiDialog').showModal();el('apiKey').focus();
 };
+document.querySelectorAll('[data-settings]').forEach(link=>link.addEventListener('click',async event=>{
+  event.preventDefault();
+  try{await request('/api/credits/open-settings',{page:link.dataset.settings})}
+  catch(error){el(el('apiDialog').open?'apiFormError':'apiError').textContent=error.message}
+}));
 el('apiHasGrant').onchange=updateForm;el('apiKey').oninput=updateForm;el('apiManual').onchange=()=>{if(el('apiManual').checked)el('apiAdvanced').open=true;updateForm()};
 el('addApi').onclick=()=>edit(null);el('cancelApi').onclick=()=>el('apiDialog').close();el('apiDialog').addEventListener('close',()=>el('apiKey').value='');el('apiDialog').addEventListener('cancel',event=>{if(el('saveApi').disabled)event.preventDefault()});
 el('apiLang').onchange=event=>{language=event.target.value;render()};
@@ -192,7 +197,7 @@ el('apiForm').onsubmit=async event=>{
     if(el('apiId').value)body.id=el('apiId').value;
     button.textContent=t(body.admin_key?'verifying':'save');el('apiForm').inert=true;el('cancelApi').disabled=true;el('apiFormError').textContent='';
     await request('/api/credits/'+(body.admin_key?'connect':'save'),body);el('apiDialog').close();await poll()
-  }catch(error){el('apiFormError').textContent=error.name==='TimeoutError'?t('failed'):error.message;if(error.message.includes('org-'))el('apiAdvanced').open=true}
+  }catch(error){el('apiFormError').textContent=error.name==='TimeoutError'?t('failed'):error.message;if(error.message.includes('org-')||error.message.includes('组织 ID')||error.message.includes('selected ID'))el('apiAdvanced').open=true}
   finally{button.disabled=false;el('apiForm').inert=false;el('cancelApi').disabled=false;body.admin_key='';updateForm()}
 };
 poll();setInterval(poll,5000);

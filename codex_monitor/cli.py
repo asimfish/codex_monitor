@@ -16,7 +16,7 @@ from . import __version__, autostart, browsers, paths, store, usage
 from .identity import fmt_countdown, fmt_local, identity, now_utc, plan_label, to_json_value
 from .oauth import BrowserLogin, DeviceCodeLogin, OAuthError, apply_refreshed, refresh_tokens
 from .store import StoreError
-from .api_credits import ApiCredits
+from .api_credits import ApiCredits, open_settings
 
 
 def _utf8_stdout() -> None:
@@ -440,7 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-y", "--yes", action="store_true")
     s.set_defaults(fn=cmd_remove)
     s = sp.add_parser("api-credits", help="manage independent OpenAI API organization costs and grant estimates")
-    s.add_argument("action", choices=["list", "save", "connect", "refresh", "poll", "remove"], nargs="?", default="list")
+    s.add_argument("action", choices=["list", "save", "connect", "open-settings", "refresh", "poll", "remove"], nargs="?", default="list")
     s.add_argument("--id")
     s.set_defaults(fn=cmd_api_credits)
     return p
@@ -448,7 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_api_credits(args):
     manager = ApiCredits()
-    if args.action in ("save", "connect"):
+    if args.action in ("save", "connect", "open-settings"):
         try:
             raw = sys.stdin.read(32769)
             if len(raw) > 32768:
@@ -456,7 +456,12 @@ def cmd_api_credits(args):
             body = json.loads(raw)
         except ValueError:
             raise StoreError("Provide an API account JSON object on standard input") from None
-        manager.save(body, verify=args.action == "connect")
+        if args.action == "open-settings":
+            if not isinstance(body, dict):
+                raise StoreError("Choose an official API settings page")
+            open_settings(body.get("page"))
+        else:
+            manager.save(body, verify=args.action == "connect")
     elif args.action == "remove":
         if not args.id:
             raise StoreError("Choose an API account ID")

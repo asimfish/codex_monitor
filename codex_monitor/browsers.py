@@ -113,6 +113,36 @@ def open_default(url: str) -> bool:
         return False
 
 
+def find_regular_browser() -> Optional[Tuple[str, List[str]]]:
+    for name, _ in _BROWSERS:
+        if paths.IS_MAC:
+            binary = "firefox" if name == "Firefox" else name
+            candidates = [Path(root, name + ".app", "Contents", "MacOS", binary)
+                          for root in ("/Applications", str(Path.home() / "Applications"))]
+        elif paths.IS_WINDOWS:
+            candidates = _windows_candidates(_WINDOWS_PATHS.get(name, []))
+            candidates += [Path(found) for binary in _LINUX_BINARIES[name] if (found := shutil.which(binary))]
+        else:
+            candidates = [Path(found) for binary in _LINUX_BINARIES[name] if (found := shutil.which(binary))]
+        for binary in candidates:
+            if binary.is_file():
+                return name, [str(binary), "--new-window"]
+    return None
+
+
+def open_regular(url: str) -> bool:
+    """Use the normal persistent browser profile, even after an isolated login."""
+    found = find_regular_browser()
+    if not found:
+        return False
+    try:
+        subprocess.Popen(found[1] + [url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=not paths.IS_WINDOWS)
+        return True
+    except OSError:
+        return False
+
+
 def open_app_window(url: str) -> Optional[str]:
     """Open the dashboard as a chromeless 'app' window (Chromium browsers) so it looks like a
     widget; falls back to a normal tab."""

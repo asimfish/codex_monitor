@@ -16,7 +16,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from codex_monitor import api_credits, paths, store
+from codex_monitor import api_credits, browsers, paths, store
 from codex_monitor.identity import format_iso, now_utc
 from codex_monitor.monitor import Monitor
 from codex_monitor.web import make_server
@@ -291,6 +291,93 @@ class ApiCreditTests(unittest.TestCase):
         with patch.object(api_credits.urllib.request, "build_opener", return_value=opener), self.assertRaisesRegex(store.StoreError, "does not match"):
             self.manager.save({"admin_key": KEY, "organization": "org-entered"}, verify=True)
         self.assertFalse(self.manager.path.exists())
+
+    def test_organization_alias_can_connect_refresh_and_edit(self):
+        def response():
+            stream = io.BytesIO(b'{"data":[],"has_more":false}')
+            stream.headers = {"openai-organization": "user-fixture-personal"}
+            return stream
+        opener = Mock(); opener.open.side_effect = lambda *args, **kwargs: response()
+        with patch.object(api_credits.urllib.request, "build_opener", return_value=opener):
+            identifier = self.manager.save({"admin_key": KEY}, verify=True)
+            with patch.object(api_credits, "now_utc", return_value=self.now+timedelta(minutes=10)):
+                self.manager.refresh(force=True)
+        row = self.manager.snapshot()["accounts"][0]
+        self.assertEqual(row["organization"], "user-fixture-personal")
+        self.assertEqual(row["costs"]["cost_usd"], "0")
+        for call in opener.open.call_args_list:
+            self.assertIsNone(call.args[0].get_header("Openai-organization"), "Response aliases must not become request organization IDs")
+        self.manager.save({"id": identifier, "organization": "", "label": "Edited alias", "admin_key": ""})
+        self.assertEqual(self.manager.snapshot()["accounts"][0]["label"], "Edited alias")
+        self.assertTrue(self.manager.snapshot()["accounts"][0]["has_admin_key"])
+
+    def test_alias_response_does_not_conflict_with_explicit_org_id(self):
+        stream = io.BytesIO(b'{"data":[],"has_more":false}')
+        stream.headers = {"openai-organization": "personal-account"}
+        opener = Mock(); opener.open.return_value = stream
+        with patch.object(api_credits.urllib.request, "build_opener", return_value=opener):
+            self.manager.save({"organization": "org-explicit", "admin_key": KEY}, verify=True)
+        self.assertEqual(self.manager.snapshot()["accounts"][0]["organization"], "org-explicit")
+        self.assertEqual(opener.open.call_args.args[0].get_header("Openai-organization"), "org-explicit")
+
+    def test_alias_is_not_assumed_to_be_a_unique_organization_id(self):
+        result = {**self.result(), "organization": "Personal"}
+        with patch.object(api_credits, "fetch_costs", return_value=result):
+            self.manager.save({"admin_key": KEY}, verify=True)
+            self.manager.save({"admin_key": "sk-admin-fabricated-other-account"}, verify=True)
+            before = self.manager.path.read_bytes()
+            with self.assertRaisesRegex(store.StoreError, "already tracked"):
+                self.manager.save({"admin_key": KEY}, verify=True)
+        self.assertEqual(len(self.manager.snapshot()["accounts"]), 2)
+        self.assertEqual(self.manager.path.read_bytes(), before)
+
+    def test_settings_launch_a_regular_window_only(self):
+        process = Mock()
+        with patch.object(browsers, "find_regular_browser", return_value=("Google Chrome", ["chrome", "--new-window"])), patch.object(browsers.subprocess, "Popen", return_value=process) as launch, patch.object(browsers, "open_private") as private:
+            api_credits.open_settings("admin_keys")
+        self.assertEqual(launch.call_args.args[0], ["chrome", "--new-window", "https://platform.openai.com/settings/organization/admin-keys"])
+        private.assert_not_called()
+        for page in ("https://evil.test", "file:///tmp/test", None, []):
+            with self.subTest(page=page), self.assertRaises(store.StoreError):
+                api_credits.open_settings(page)
+
+    def test_macos_regular_launch_avoids_launchservices_private_instance(self):
+        expected = str(Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
+        with patch.object(browsers.paths, "IS_MAC", True), patch.object(Path, "is_file", lambda path: str(path) == expected):
+            self.assertEqual(browsers.find_regular_browser(), ("Google Chrome", [expected, "--new-window"]))
+        with patch.object(browsers, "find_regular_browser", return_value=None), patch.object(browsers, "open_default") as default:
+            self.assertFalse(browsers.open_regular("https://platform.openai.com/"))
+        default.assert_not_called()
+
+    def test_settings_endpoint_is_authenticated_and_rejects_arbitrary_urls(self):
+        server = make_server(Monitor(), port=0, token="settings-fixture")
+        worker = threading.Thread(target=server.serve_forever, daemon=True); worker.start()
+        self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
+        url = "http://127.0.0.1:%d/api/credits/open-settings" % server.server_port
+        def request(body, token=None):
+            return urllib.request.Request(url, data=json.dumps(body).encode(), headers={"X-Token": token} if token else {})
+        with patch.object(browsers, "open_regular", return_value=True) as regular:
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request({"page": "admin_keys"}))
+            self.assertEqual(error.exception.code, 403)
+            regular.assert_not_called()
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(request({"page": "https://evil.test"}, "settings-fixture"))
+            self.assertEqual(error.exception.code, 400)
+            regular.assert_not_called()
+            self.assertTrue(json.load(urllib.request.urlopen(request({"page": "admin_keys"}, "settings-fixture")))["ok"])
+            regular.assert_called_once_with(api_credits.SETTINGS_PAGES["admin_keys"])
+
+    def test_native_settings_cli_uses_only_the_fixed_official_url(self):
+        script = """from unittest.mock import patch
+from codex_monitor import browsers, cli
+with patch.object(browsers, 'open_regular', return_value=True) as launch:
+    cli.main(['api-credits', 'open-settings'])
+    launch.assert_called_once_with('https://platform.openai.com/settings/organization/admin-keys')
+"""
+        run = subprocess.run([sys.executable, "-c", script], input='{"page":"admin_keys"}', text=True, capture_output=True, timeout=10)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(json.loads(run.stdout)["accounts"], [])
 
     def test_month_rollover_hides_old_costs_and_never_renews_grant(self):
         with patch.object(api_credits, "fetch_costs", return_value=self.result("10")):

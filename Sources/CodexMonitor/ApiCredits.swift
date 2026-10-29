@@ -85,6 +85,7 @@ final class ApiCreditModel: ObservableObject {
             let message = error.localizedDescription
             if message.contains("invalid or expired") { self.error = "Admin Key 无效或已过期，请到官方 Admin Keys 页面重新创建。" }
             else if message.contains("(403)") { self.error = "费用查询权限不足（403），请确认使用 Admin Key、组织正确且具备 Owner 权限。" }
+            else if message.contains("does not match") { self.error = "返回的组织 ID 与所选组织不一致。请清空高级设置中的组织 ID，再按 Key 所属组织验证；本次未保存。" }
             else if message.contains("ID was not returned") { self.error = "Key 已验证，但未返回组织 ID。请展开高级设置，填写官方设置中的 org-… ID 后重试。" }
             else { self.error = message }
         }
@@ -184,7 +185,7 @@ private struct ApiCreditsView: View {
                     }
                 }
             }
-            Link("打开官方账单核对余额", destination: URL(string: "https://platform.openai.com/settings/organization/billing/overview")!)
+            Button("用普通浏览器打开官方账单", action: { Task { await model.run("open-settings", body: ["page": "billing"]) } }).buttonStyle(.link)
                 .font(.caption)
         }
         .padding(20).background(Color(nsColor: .windowBackgroundColor)).disabled(model.busy)
@@ -232,7 +233,7 @@ private struct ApiCreditEditor: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("两步完成配置").font(.headline)
                         Text("1. 在官方后台创建 Admin Key。\n2. 粘贴到这里，点击「验证并添加」。").font(.callout)
-                        Link("打开官方 Admin Keys 创建页面 ↗", destination: URL(string: "https://platform.openai.com/settings/organization/admin-keys")!)
+                        Button("用普通浏览器打开 Admin Keys 创建页面 ↗") { Task { await model.run("open-settings", body: ["page": "admin_keys"]) } }.buttonStyle(.link)
                         Text("先切换到领取额度的 API 组织；需要该组织的 Owner（所有者）权限。").font(.caption).foregroundStyle(.secondary)
                     }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
@@ -254,7 +255,7 @@ private struct ApiCreditEditor: View {
                         VStack(alignment: .leading, spacing: 12) {
                             TextField("组织 ID（通常自动识别，org-...）", text: $organization)
                             Text("留空时从成功的费用响应识别；手工记录需要填写组织 ID。").font(.caption).foregroundStyle(.secondary)
-                            Link("前往官方设置查看组织 ID ↗", destination: URL(string: "https://platform.openai.com/settings/organization/general")!)
+                            Button("用普通浏览器查看组织 ID ↗") { Task { await model.run("open-settings", body: ["page": "organization"]) } }.buttonStyle(.link)
                             Stepper("刷新间隔：\(interval) 秒", value: $interval, in: 60...3600, step: 60)
                         }.padding(.top, 10)
                     }
@@ -273,7 +274,7 @@ private struct ApiCreditEditor: View {
                     Task {
                         await model.run(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "save" : "connect", body: body)
                         if model.error == nil { key = ""; dismiss() }
-                        else if model.error?.contains("org-") == true { advanced = true }
+                        else if model.error?.contains("org-") == true || model.error?.contains("组织 ID") == true { advanced = true }
                     }
                 }.keyboardShortcut(.defaultAction)
                     .disabled(account == nil && !manual && key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -281,7 +282,7 @@ private struct ApiCreditEditor: View {
         }.padding(24).frame(width: 510, height: 600).disabled(model.busy)
         .onAppear {
             model.error = nil
-            label = account?.label ?? ""; organization = account?.organization ?? ""; total = account?.grantTotal ?? ""
+            label = account?.label ?? ""; organization = account.flatMap { $0.organization.hasPrefix("org-") ? $0.organization : nil } ?? ""; total = account?.grantTotal ?? ""
             if let account = account {
                 start = ISO8601.parse(account.periodStart) ?? Date()
                 end = ISO8601.parse(account.periodEnd) ?? Date()
