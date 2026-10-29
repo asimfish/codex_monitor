@@ -251,6 +251,95 @@ class ApiCreditTests(unittest.TestCase):
             with self.subTest(payload=payload), patch.object(api_credits.urllib.request, "build_opener", return_value=opener), self.assertRaises(store.StoreError):
                 api_credits.fetch_costs(KEY, "org-fixture", self.now-timedelta(days=1), self.now)
 
+    def test_key_only_connect_discovers_org_and_saves_first_costs(self):
+        response = io.BytesIO(b'{"data":[],"has_more":false}')
+        response.headers = {"openai-organization": "org-discovered"}
+        opener = Mock(); opener.open.return_value = response
+        with patch.object(api_credits.urllib.request, "build_opener", return_value=opener):
+            self.manager.save({"admin_key": KEY}, verify=True)
+        request = opener.open.call_args.args[0]
+        self.assertEqual(request.get_method(), "GET")
+        self.assertEqual(request.get_header("Authorization"), "Bearer " + KEY)
+        self.assertIsNone(request.get_header("Openai-organization"))
+        row = self.manager.snapshot()["accounts"][0]
+        self.assertEqual((row["label"], row["organization"], row["period_mode"]), ("OpenAI API", "org-discovered", "calendar_month"))
+        self.assertEqual(row["costs"]["cost_usd"], "0")
+        self.assertIsNone(row["grant_total"])
+        self.assertIsNone(row["estimated_remaining"])
+        self.assertFalse(row["stale"])
+        self.assertNotIn(KEY, json.dumps(row))
+
+    def test_connect_failure_or_missing_org_saves_nothing(self):
+        for code in (401, 403, 429):
+            opener = Mock()
+            opener.open.side_effect = urllib.error.HTTPError("https://api.openai.com/", code, KEY, {}, io.BytesIO(KEY.encode()))
+            with self.subTest(code=code), patch.object(api_credits.urllib.request, "build_opener", return_value=opener), self.assertRaises(store.StoreError) as error:
+                self.manager.save({"admin_key": KEY}, verify=True)
+            self.assertNotIn(KEY, str(error.exception))
+            self.assertFalse(self.manager.path.exists())
+        with patch.object(api_credits, "fetch_costs", return_value=self.result()), self.assertRaisesRegex(store.StoreError, "ID was not returned"):
+            self.manager.save({"admin_key": KEY}, verify=True)
+        self.assertFalse(self.manager.path.exists())
+        with patch.object(api_credits, "fetch_costs", return_value=self.result()):
+            self.manager.save({"admin_key": KEY, "organization": "org-entered"}, verify=True)
+        self.assertEqual(self.manager.snapshot()["accounts"][0]["organization"], "org-entered")
+
+    def test_org_mismatch_is_rejected_without_saving(self):
+        response = io.BytesIO(b'{"data":[],"has_more":false}')
+        response.headers = {"openai-organization": "org-other"}
+        opener = Mock(); opener.open.return_value = response
+        with patch.object(api_credits.urllib.request, "build_opener", return_value=opener), self.assertRaisesRegex(store.StoreError, "does not match"):
+            self.manager.save({"admin_key": KEY, "organization": "org-entered"}, verify=True)
+        self.assertFalse(self.manager.path.exists())
+
+    def test_month_rollover_hides_old_costs_and_never_renews_grant(self):
+        with patch.object(api_credits, "fetch_costs", return_value=self.result("10")):
+            self.manager.save({"organization": "org-month", "admin_key": KEY}, verify=True)
+        next_month = (self.now.replace(day=1) + timedelta(days=32)).replace(day=2)
+        with patch.object(api_credits, "now_utc", return_value=next_month):
+            row = self.manager.snapshot()["accounts"][0]
+            self.assertIsNone(row["costs"])
+            self.assertTrue(row["stale"])
+            self.assertFalse(row["expired"])
+            self.assertIsNone(row["grant_total"])
+            with patch.object(api_credits, "fetch_costs", return_value=self.result("2")) as fetch:
+                self.manager.refresh()
+            self.assertEqual(fetch.call_args.args[2].day, 1)
+            self.assertEqual(fetch.call_args.args[2].month, next_month.month)
+            self.assertEqual(self.manager.snapshot()["accounts"][0]["costs"]["cost_usd"], "2")
+        with self.assertRaisesRegex(store.StoreError, "actual grant dates"):
+            self.manager.save({"organization": "org-other", "grant_total": "100"})
+
+    def test_failed_key_replacement_and_late_connect_preserve_edits(self):
+        identifier = self.add()
+        before = self.manager.path.read_bytes()
+        with patch.object(api_credits, "fetch_costs", side_effect=store.StoreError("Access denied")), self.assertRaises(store.StoreError):
+            self.manager.save({**self.body, "id": identifier, "admin_key": "sk-admin-fabricated-replacement"}, verify=True)
+        self.assertEqual(self.manager.path.read_bytes(), before)
+        def fetch(*args):
+            self.manager.save({**self.body, "id": identifier, "label": "Concurrent edit", "admin_key": ""})
+            return self.result()
+        with patch.object(api_credits, "fetch_costs", side_effect=fetch), self.assertRaisesRegex(store.StoreError, "changed during verification"):
+            self.manager.save({**self.body, "id": identifier}, verify=True)
+        self.assertEqual(self.manager.snapshot()["accounts"][0]["label"], "Concurrent edit")
+
+    def test_connect_route_requires_dashboard_authentication(self):
+        server = make_server(Monitor(), port=0, token="fixture-connect-token")
+        worker = threading.Thread(target=server.serve_forever, daemon=True); worker.start()
+        self.addCleanup(server.server_close); self.addCleanup(server.shutdown)
+        url = "http://127.0.0.1:%d/api/credits/connect" % server.server_port
+        body = json.dumps({"admin_key": KEY}).encode()
+        with patch.object(api_credits, "fetch_costs", return_value={**self.result("1.25"), "organization": "org-connected"}) as fetch:
+            with self.assertRaises(urllib.error.HTTPError) as error:
+                urllib.request.urlopen(urllib.request.Request(url, data=body))
+            self.assertEqual(error.exception.code, 403)
+            fetch.assert_not_called()
+            request = urllib.request.Request(url, data=body, headers={"X-Token": "fixture-connect-token"})
+            raw = urllib.request.urlopen(request).read().decode()
+        self.assertTrue(json.loads(raw)["ok"])
+        self.assertNotIn(KEY, raw)
+        self.assertEqual(self.manager.snapshot()["accounts"][0]["costs"]["cost_usd"], "1.25")
+
 
 if __name__ == "__main__":
     unittest.main()

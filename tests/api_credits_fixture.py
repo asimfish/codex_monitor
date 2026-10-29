@@ -5,11 +5,13 @@ import sys
 import tempfile
 from datetime import timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from codex_monitor.identity import now_utc, format_iso
 from codex_monitor.monitor import Monitor
 from codex_monitor.web import make_server
+from codex_monitor.store import StoreError
 
 with tempfile.TemporaryDirectory(prefix="cm-api-browser-") as temporary:
     os.environ["CODEX_HOME"] = str(Path(temporary) / "main")
@@ -30,6 +32,12 @@ with tempfile.TemporaryDirectory(prefix="cm-api-browser-") as temporary:
             records[identifier]["costs"] = {"cost_usd": "25.50", "queried_until": format_iso(now), "days": []}
             manager._save(records)
     server = make_server(monitor, port=0, token="api-browser-fixture")
+    def fixture_costs(key, organization, start, end):
+        if key != "sk-admin-fabricated-connect-test":
+            raise StoreError("Costs access denied (403). Use an organization owner's Admin API key and check the organization ID.")
+        return {"cost_usd": "3.25", "queried_until": format_iso(end), "days": [], "organization": organization or "org-connected"}
     print("http://127.0.0.1:%d/api-credits?token=api-browser-fixture&lang=zh" % server.server_port, flush=True)
-    try: server.serve_forever()
+    try:
+        with patch("codex_monitor.api_credits.fetch_costs", side_effect=fixture_costs):
+            server.serve_forever()
     finally: server.server_close()

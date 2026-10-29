@@ -6,6 +6,7 @@ struct ApiCreditAccount: Decodable, Identifiable {
     let label: String
     let organization: String
     let grantTotal: String?
+    let periodMode: String
     let periodStart: String
     let periodEnd: String
     let refreshInterval: Int
@@ -80,7 +81,13 @@ final class ApiCreditModel: ObservableObject {
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             accounts = try decoder.decode(ApiCreditSnapshot.self, from: result.get()).accounts
             error = nil
-        } catch { self.error = error.localizedDescription }
+        } catch {
+            let message = error.localizedDescription
+            if message.contains("invalid or expired") { self.error = "Admin Key 无效或已过期，请到官方 Admin Keys 页面重新创建。" }
+            else if message.contains("(403)") { self.error = "费用查询权限不足（403），请确认使用 Admin Key、组织正确且具备 Owner 权限。" }
+            else if message.contains("ID was not returned") { self.error = "Key 已验证，但未返回组织 ID。请展开高级设置，填写官方设置中的 org-… ID 后重试。" }
+            else { self.error = message }
+        }
     }
 }
 
@@ -162,10 +169,10 @@ private struct ApiCreditsView: View {
                             }
                             HStack(spacing: 25) {
                                 metric("录入总额", apiMoney(account.grantTotal))
-                                metric("已报告费用", apiMoney(account.costs?.costUsd))
+                                metric(account.periodMode == "calendar_month" ? "本月已报告费用" : "已报告费用", apiMoney(account.costs?.costUsd))
                                 metric("估算剩余", apiMoney(account.estimatedRemaining))
                             }
-                            Text("到期：\(apiDate(account.periodEnd))\n最近同步：\(apiDate(account.lastSuccess))　下次刷新：\(apiDate(account.nextRefresh))")
+                            Text("\(account.periodMode == "calendar_month" ? "费用统计月份（UTC）" : "赠送到期")：\(account.periodMode == "calendar_month" ? String(account.periodStart.prefix(7)) : apiDate(account.periodEnd))\n最近同步：\(apiDate(account.lastSuccess))　下次刷新：\(apiDate(account.nextRefresh))")
                                 .font(.caption).foregroundStyle(.secondary)
                             if account.expired { Text("赠送已到期，尚未录入新额度").font(.caption).foregroundStyle(.orange) }
                             else if !account.hasAdminKey { Text("未配置 Admin Key，费用未知").font(.caption).foregroundStyle(.secondary) }
@@ -214,37 +221,74 @@ private struct ApiCreditEditor: View {
     @State private var start = Date()
     @State private var end = Date()
     @State private var interval = 300
+    @State private var hasGrant = false
+    @State private var manual = false
+    @State private var advanced = false
     var body: some View {
-        Form {
-            Text("API 账号").font(.title2.bold())
-            TextField("账号名称", text: $label)
-            TextField("组织 ID（org-...）", text: $organization)
-            SecureField("Admin Key（可选，sk-admin-...）", text: $key)
-            Text("仅存本机；编辑时留空保留原 Key。普通项目 Key 无法查询费用。").font(.caption).foregroundStyle(.secondary)
-            TextField("赠送总额 USD（可留空）", text: $total)
-            DatePicker("赠送开始", selection: $start)
-            DatePicker("赠送到期", selection: $end)
-            Stepper("刷新间隔：\(interval) 秒", value: $interval, in: 60...3600, step: 60)
-            Text("请照官方账单填写实际到账金额和时间。到期不自动续发，剩余额度仅为估算。").font(.caption).foregroundStyle(.secondary)
-            if let error = model.error { Text(error).foregroundStyle(.red).font(.caption) }
+        VStack(alignment: .leading, spacing: 16) {
+            Text(account == nil ? "添加 API 账号" : "编辑 API 账号").font(.title2.bold())
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("两步完成配置").font(.headline)
+                        Text("1. 在官方后台创建 Admin Key。\n2. 粘贴到这里，点击「验证并添加」。").font(.callout)
+                        Link("打开官方 Admin Keys 创建页面 ↗", destination: URL(string: "https://platform.openai.com/settings/organization/admin-keys")!)
+                        Text("先切换到领取额度的 API 组织；需要该组织的 Owner（所有者）权限。").font(.caption).foregroundStyle(.secondary)
+                    }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 10))
+                    SecureField("Admin Key（sk-admin-...）", text: $key)
+                    Text("只保存在本机；编辑时留空保留原 Key。普通项目 Key 无法查询费用。").font(.caption).foregroundStyle(.secondary)
+                    TextField("账号名称（可选）", text: $label)
+                    Toggle("暂不配置 Admin Key，仅保存手工记录", isOn: $manual).toggleStyle(.checkbox)
+                        .onChange(of: manual) { if manual { advanced = true } }
+                    Toggle("补充赠送金额和实际有效期（可之后再填）", isOn: $hasGrant).toggleStyle(.checkbox)
+                    if hasGrant {
+                        TextField("赠送总额 USD（未知时留空）", text: $total)
+                        DatePicker("赠送开始", selection: $start)
+                        DatePicker("赠送到期", selection: $end)
+                        Text("照官方账单填写实际到账金额和时间；剩余额度仅为估算，到期不会自动续发。").font(.caption).foregroundStyle(.secondary)
+                    } else {
+                        Text("先同步本自然月费用（UTC）；补充实际赠送金额和有效期后，才会估算余额。").font(.caption).foregroundStyle(.secondary)
+                    }
+                    DisclosureGroup("高级设置 · 组织和刷新间隔", isExpanded: $advanced) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            TextField("组织 ID（通常自动识别，org-...）", text: $organization)
+                            Text("留空时从成功的费用响应识别；手工记录需要填写组织 ID。").font(.caption).foregroundStyle(.secondary)
+                            Link("前往官方设置查看组织 ID ↗", destination: URL(string: "https://platform.openai.com/settings/organization/general")!)
+                            Stepper("刷新间隔：\(interval) 秒", value: $interval, in: 60...3600, step: 60)
+                        }.padding(.top, 10)
+                    }
+                    if let error = model.error { Text(error).foregroundStyle(.red).font(.caption).textSelection(.enabled) }
+                }.padding(.trailing, 8)
+            }
             HStack {
                 Button("取消") { key = ""; dismiss() }.keyboardShortcut(.cancelAction)
                 Spacer()
-                Button("保存") {
+                if model.busy { ProgressView().controlSize(.small) }
+                Button(model.busy ? "正在验证…" : (!key.isEmpty || (account == nil && !manual) ? (account == nil ? "验证并添加" : "验证并保存") : "保存")) {
                     var body: [String: Any] = ["label": label, "organization": organization.trimmingCharacters(in: .whitespacesAndNewlines),
-                                             "admin_key": key, "grant_total": total, "period_start": ISO8601.format(start),
-                                             "period_end": ISO8601.format(end), "refresh_interval": interval]
+                                             "admin_key": key.trimmingCharacters(in: .whitespacesAndNewlines), "period_mode": hasGrant ? "custom" : "calendar_month", "refresh_interval": interval]
+                    if hasGrant { body["grant_total"] = total; body["period_start"] = ISO8601.format(start); body["period_end"] = ISO8601.format(end) }
                     if let account = account { body["id"] = account.id }
-                    Task { await model.run("save", body: body); if model.error == nil { key = ""; dismiss() } }
+                    Task {
+                        await model.run(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "save" : "connect", body: body)
+                        if model.error == nil { key = ""; dismiss() }
+                        else if model.error?.contains("org-") == true { advanced = true }
+                    }
                 }.keyboardShortcut(.defaultAction)
+                    .disabled(account == nil && !manual && key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        }.padding(24).frame(width: 510).disabled(model.busy)
+        }.padding(24).frame(width: 510, height: 600).disabled(model.busy)
         .onAppear {
+            model.error = nil
             label = account?.label ?? ""; organization = account?.organization ?? ""; total = account?.grantTotal ?? ""
             if let account = account {
                 start = ISO8601.parse(account.periodStart) ?? Date()
                 end = ISO8601.parse(account.periodEnd) ?? Date()
                 interval = account.refreshInterval
+                hasGrant = account.periodMode == "custom"
+                manual = !account.hasAdminKey
+                advanced = manual
             }
         }
         .onDisappear { key = "" }
