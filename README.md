@@ -141,12 +141,12 @@ git rev-parse HEAD
 
 #### Reproduce a specific source version
 
-This pins commit `8856008`, which includes API organization credit tracking, isolated private login sessions, cancelled-account retention, duplicate display fixes, native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
+This pins commit `452b7b4`, which includes API organization credit tracking, isolated private login sessions, cancelled-account retention, duplicate display fixes, native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 88560080ecacb4cf2094e24f5a4f271c35bf39ed
+git checkout --detach 452b7b4bfbfd8c97996fb52b0beec9d744305de1
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
@@ -316,7 +316,7 @@ promotional grant balance is not established by the documentation used here.
 
 ### 3.3 Verification scope and downloads
 
-[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `8856008` or newer code. The checks cover:
+[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `452b7b4` or newer code. The checks cover:
 
 | Check | Verified environment | Limits |
 |---|---|---|

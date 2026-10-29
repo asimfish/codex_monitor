@@ -138,12 +138,12 @@ git rev-parse HEAD
 
 #### 复现一个确定的源码版本
 
-下面锁定到包含 API 组织额度管理、独立隐身登录、取消后账号保留、重复显示修复、原生标签增删改、存档删除和账号重命名功能的 `8856008` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
+下面锁定到包含 API 组织额度管理、独立隐身登录、取消后账号保留、重复显示修复、原生标签增删改、存档删除和账号重命名功能的 `452b7b4` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 88560080ecacb4cf2094e24f5a4f271c35bf39ed
+git checkout --detach 452b7b4bfbfd8c97996fb52b0beec9d744305de1
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
@@ -304,7 +304,7 @@ API 记录独立于 Codex 登录，不会切换当前账号。原生窗口复用
 
 ### 3.3 验证范围与下载
 
-[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `8856008` 或更新代码、且显示成功的运行。检查范围如下：
+[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `452b7b4` 或更新代码、且显示成功的运行。检查范围如下：
 
 | 检查 | 已验证环境 | 不代表什么 |
 |---|---|---|
