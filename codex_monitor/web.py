@@ -25,7 +25,12 @@ PAGE = PAGE.replace("__STYLE__", (_ASSETS / "dashboard.css").read_text(encoding=
 PAGE = PAGE.replace("__SCRIPT__", (_ASSETS / "dashboard.js").read_text(encoding="utf-8"))
 
 
-def _page() -> bytes:
+def _page(api_credits: bool = False) -> bytes:
+    if api_credits:
+        html = (_ASSETS / "api_credits.html").read_text(encoding="utf-8")
+        html = html.replace("__STYLE__", (_ASSETS / "dashboard.css").read_text(encoding="utf-8"))
+        html = html.replace("__SCRIPT__", (_ASSETS / "api_credits.js").read_text(encoding="utf-8"))
+        return html.encode("utf-8")
     html = PAGE.replace("__EN__", json.dumps(EN, ensure_ascii=False)).replace("__ZH__", json.dumps(ZH, ensure_ascii=False))
     return html.encode("utf-8")
 
@@ -106,11 +111,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urllib.parse.urlsplit(self.path).path
-        if path == "/":
+        if path in ("/", "/api-credits"):
             if not self._authorized():
                 self._json(403, {"error": "open the dashboard through the URL printed by `codex-monitor serve` (it carries the access token)"})
                 return
-            body = _page()
+            body = _page(api_credits=path == "/api-credits")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
@@ -122,6 +127,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if path == "/api/state":
             self._json(200, self.monitor.snapshot())
+        elif path == "/api/credits":
+            try:
+                self._json(200, self.monitor.api_credits.snapshot())
+            except StoreError as error:
+                self._json(400, {"error": str(error)})
         elif path == "/api/login/status":
             self.monitor.finish_login_if_done()
             self._json(200, self.monitor.login_status())
@@ -172,7 +182,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 name = body["name"]
                 if not isinstance(name, str) or (name not in m.states and store.sanitize(name) != name):
                     raise StoreError("choose an exact account directory name")
-            if path == "/api/refresh":
+            if path == "/api/credits/save":
+                identifier = m.api_credits.save(body)
+                self._json(200, {"ok": True, "id": identifier})
+            elif path == "/api/credits/remove":
+                m.api_credits.remove(body.get("id"))
+                self._json(200, {"ok": True})
+            elif path == "/api/credits/refresh":
+                identifier = body.get("id")
+                if identifier is not None and identifier not in {item["id"] for item in m.api_credits.snapshot()["accounts"]}:
+                    raise StoreError("Unknown API account")
+                def refresh_costs():
+                    try:
+                        m.api_credits.refresh(identifier, force=True)
+                    except StoreError:
+                        pass
+                threading.Thread(target=refresh_costs, daemon=True).start()
+                self._json(202, {"ok": True})
+            elif path == "/api/refresh":
                 name = str(body.get("name") or "").strip()
                 if name:
                     if name not in m.states:

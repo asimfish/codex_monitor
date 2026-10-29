@@ -42,6 +42,7 @@ jobs:
       - run: python tests/test_web_regressions.py
       - run: python tests/test_recovery.py
       - run: python tests/test_login_retention.py
+      - run: python tests/test_api_credits.py
       - run: python tests/test_merge_compat.py
       - run: python tests/test_dashboard.py
       - run: python tests/test_removal.py
@@ -65,6 +66,9 @@ jobs:
       - name: Verify isolated login browser cookie stores
         if: runner.os == 'Linux'
         run: node tests/check_browser_isolation.mjs
+      - name: Verify API credit management in the browser
+        if: runner.os == 'Linux'
+        run: node tests/check_api_credits_ui.mjs
       - name: Verify recovery and failure journeys in Chromium
         if: runner.os == 'Linux'
         run: |
@@ -84,6 +88,7 @@ jobs:
       - run: bash tests/run_account_order_tests.sh
       - run: bash tests/run_annotations_tests.sh
       - run: bash tests/run_login_tests.sh
+      - run: bash tests/run_api_credits_tests.sh
       - run: bash scripts/build.sh
       - name: Package application
         run: ditto -c -k --sequesterRsrc --keepParent "$(cat .last-build-path)" CodexMonitor-macos.zip

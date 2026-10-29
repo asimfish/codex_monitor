@@ -1,0 +1,63 @@
+// Real Chrome CRUD, unknown/zero separation, secret handling and mobile layout.
+import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
+import {mkdtemp,readFile,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+const root=fileURLToPath(new URL('../',import.meta.url)), directory=await mkdtemp(join(tmpdir(),'cm-api-ui-'));
+const python=process.env.PYTHON||(process.platform==='win32'?'python':'python3');
+const chromePath=process.env.CHROME_BIN||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':'google-chrome');
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+const until=async(check,message)=>{for(let n=0;n<300;n++){const value=await check();if(value)return value;await delay(100)}throw new Error(message)};
+let fixture,chrome,socket;
+try{
+  fixture=spawn(python,['tests/api_credits_fixture.py'],{cwd:root,stdio:['ignore','pipe','pipe']});let text='',stderr='';fixture.stdout.on('data',chunk=>text+=chunk);fixture.stderr.on('data',chunk=>stderr+=chunk);
+  const url=await until(()=>{if(fixture.exitCode!==null)throw new Error(stderr);return text.match(/http:\/\/[^\s]+/)?.[0]},'fixture URL');
+  chrome=spawn(chromePath,['--headless=new','--no-sandbox','--disable-gpu','--no-first-run','--no-default-browser-check','--remote-debugging-port=0','--user-data-dir='+directory,'about:blank'],{detached:process.platform!=='win32',stdio:'ignore'});
+  const port=await until(()=>readFile(join(directory,'DevToolsActivePort'),'utf8').then(v=>v.split('\n')[0]).catch(()=>null),'debug port');
+  const page=await(await fetch(`http://127.0.0.1:${port}/json/new?about:blank`,{method:'PUT'})).json();socket=new WebSocket(page.webSocketDebuggerUrl);
+  await new Promise((resolve,reject)=>{socket.addEventListener('open',resolve,{once:true});socket.addEventListener('error',reject,{once:true})});
+  let seq=0;const pending=new Map(), errors=[];
+  socket.addEventListener('message',event=>{const result=JSON.parse(event.data);if(result.id&&pending.has(result.id)){const {resolve,reject,timer}=pending.get(result.id);clearTimeout(timer);pending.delete(result.id);result.error?reject(new Error(result.error.message)):resolve(result.result)}if(result.method==='Runtime.exceptionThrown')errors.push(result.params.exceptionDetails.text)});
+  const call=(method,params={})=>new Promise((resolve,reject)=>{const id=++seq,timer=setTimeout(()=>{pending.delete(id);reject(new Error('CDP timeout '+method))},10000);pending.set(id,{resolve,reject,timer});socket.send(JSON.stringify({id,method,params}))});
+  const evaluate=async expression=>{const result=await call('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(result.exceptionDetails)throw new Error(result.exceptionDetails.exception?.description||result.exceptionDetails.text);return result.result.value};
+  await call('Runtime.enable');await call('Page.enable');await call('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});await call('Page.navigate',{url});
+  await until(()=>evaluate("document.querySelectorAll('[data-id]').length===3"),'account cards');
+  assert.equal(await evaluate("document.documentElement.lang"),'zh-CN');
+  assert(await evaluate("document.body.innerText.includes('174.50')"),'Estimated remaining uses the reported costs');
+  assert.equal(await evaluate("document.querySelectorAll('.api-card h2 b').length"),0,'Label HTML is escaped');
+  assert.equal(await evaluate("document.body.innerHTML.includes('sk-admin-fabricated-browser-only')"),false,'Secret is absent from page and public snapshots');
+  assert(await evaluate("document.querySelector('#apiNote').textContent.includes('并非官方余额')"));
+  await evaluate("document.getElementById('addApi').click()");
+  const fill=async(key,value)=>evaluate(`document.getElementById(${JSON.stringify(key)}).value=${JSON.stringify(value)}`);
+  await fill('apiLabel','Added account');await fill('apiOrg','org-added');await fill('apiGrant','0');
+  await fill('apiStart','2026-10-01T00:00');await fill('apiEnd','2026-11-01T00:00');await fill('apiKey','sk-proj-fabricated-key');
+  await evaluate("document.getElementById('apiForm').requestSubmit()");
+  await until(()=>evaluate("document.getElementById('apiFormError').textContent.includes('Admin API key')"),'project key denial');
+  assert.equal(await evaluate("document.querySelectorAll('[data-id]').length"),3);
+  await fill('apiKey','');await evaluate("document.getElementById('apiForm').requestSubmit()");
+  await until(()=>evaluate("document.querySelectorAll('[data-id]').length===4"),'saved manual record');
+  const added=await evaluate("[...document.querySelectorAll('[data-id]')].find(node=>node.innerText.includes('Added account')).dataset.id");
+  assert(await evaluate(`document.querySelector('[data-id="${added}"]').innerText.includes('0.00')`),'Known zero grant shown');
+  assert(await evaluate(`document.querySelector('[data-id="${added}"] button[data-act=refresh]').disabled`),'Manual record never triggers model or billing queries');
+  await evaluate(`document.querySelector('[data-id="${added}"] button[data-act=edit]').click()`);
+  assert.equal(await evaluate("document.getElementById('apiKey').value"),'');
+  await fill('apiLabel','Renamed account');await evaluate("document.getElementById('apiForm').requestSubmit()");
+  await until(()=>evaluate("document.body.innerText.includes('Renamed account')"),'updated label');
+  await call('Page.reload');await until(()=>evaluate("document.querySelectorAll('[data-id]').length===4"),'persisted account');
+  await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+  assert(await evaluate("document.documentElement.scrollWidth<=window.innerWidth+1"),'Mobile page fits viewport');
+  const capture=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile('/tmp/cm-api-credits-mobile.png',Buffer.from(capture.data,'base64'));
+  await call('Emulation.setDeviceMetricsOverride',{width:1280,height:1000,deviceScaleFactor:1,mobile:false});
+  const desktop=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile('/tmp/cm-api-credits-desktop.png',Buffer.from(desktop.data,'base64'));
+  await evaluate(`window.confirm=()=>true;document.querySelector('[data-id="${added}"] button[data-act=remove]').click()`);
+  await until(()=>evaluate("document.querySelectorAll('[data-id]').length===3"),'deleted manual record');
+  await evaluate("document.getElementById('apiLang').value='en';document.getElementById('apiLang').dispatchEvent(new Event('change'))");
+  assert.equal(await evaluate("document.getElementById('apiTitle').textContent"),'API credit overview');
+  assert.deepEqual(errors,[]);console.log('API browser checks passed: manual add/edit/delete/reload, ordinary-key rejection, no key disclosure, explicit estimate, desktop/mobile and EN/ZH.');
+}finally{
+  socket?.close();
+  for(const child of [chrome,fixture])if(child&&child.exitCode===null){if(child===chrome&&process.platform!=='win32'){try{process.kill(-child.pid,'SIGTERM')}catch{}}else child.kill();await Promise.race([new Promise(resolve=>child.once('exit',resolve)),delay(3000)]);if(child===chrome&&process.platform!=='win32'){try{process.kill(-child.pid,'SIGKILL')}catch{}}}
+  await rm(directory,{recursive:true,force:true});
+}

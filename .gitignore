@@ -17,5 +17,6 @@ secrets.json
 .codex-accounts/
 _auth_locks/
 _reset_requests/
+_api_accounts/
 sessions/
 *.log

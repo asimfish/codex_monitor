@@ -16,6 +16,7 @@ from . import __version__, autostart, browsers, paths, store, usage
 from .identity import fmt_countdown, fmt_local, identity, now_utc, plan_label, to_json_value
 from .oauth import BrowserLogin, DeviceCodeLogin, OAuthError, apply_refreshed, refresh_tokens
 from .store import StoreError
+from .api_credits import ApiCredits
 
 
 def _utf8_stdout() -> None:
@@ -438,7 +439,31 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("name")
     s.add_argument("-y", "--yes", action="store_true")
     s.set_defaults(fn=cmd_remove)
+    s = sp.add_parser("api-credits", help="manage independent OpenAI API organization costs and grant estimates")
+    s.add_argument("action", choices=["list", "save", "refresh", "poll", "remove"], nargs="?", default="list")
+    s.add_argument("--id")
+    s.set_defaults(fn=cmd_api_credits)
     return p
+
+
+def cmd_api_credits(args):
+    manager = ApiCredits()
+    if args.action == "save":
+        try:
+            raw = sys.stdin.read(32769)
+            if len(raw) > 32768:
+                raise ValueError()
+            body = json.loads(raw)
+        except ValueError:
+            raise StoreError("Provide an API account JSON object on standard input") from None
+        manager.save(body)
+    elif args.action == "remove":
+        if not args.id:
+            raise StoreError("Choose an API account ID")
+        manager.remove(args.id)
+    elif args.action in ("refresh", "poll"):
+        manager.refresh(args.id, force=args.action == "refresh")
+    print(json.dumps(manager.snapshot(), ensure_ascii=False))
 
 
 def main(argv: Optional[List[str]] = None) -> None:
