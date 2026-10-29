@@ -182,8 +182,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 name = body["name"]
                 if not isinstance(name, str) or (name not in m.states and store.sanitize(name) != name):
                     raise StoreError("choose an exact account directory name")
-            if path == "/api/credits/save":
-                identifier = m.api_credits.save(body)
+            if path in ("/api/credits/save", "/api/credits/connect"):
+                identifier = m.api_credits.save(body, verify=path == "/api/credits/connect")
                 self._json(200, {"ok": True, "id": identifier})
             elif path == "/api/credits/remove":
                 m.api_credits.remove(body.get("id"))

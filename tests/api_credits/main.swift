@@ -20,6 +20,12 @@ import Foundation
         precondition(reloaded.accounts.count == 1 && reloaded.accounts[0].id == account.id, "public snapshot persists")
         await model.run("remove", id: account.id)
         precondition(model.error == nil && model.accounts.isEmpty, "native removal changes only API records")
+        await model.run("connect", body: ["admin_key": "sk-proj-fabricated-rejected"])
+        precondition(model.error != nil && model.accounts.isEmpty, "failed connection never creates an invisible account")
+        await model.run("save", body: ["organization": "org-simple-native"])
+        precondition(model.error == nil && model.accounts[0].periodMode == "calendar_month")
+        precondition(model.accounts[0].grantTotal == nil && model.accounts[0].estimatedRemaining == nil)
+        await model.run("remove", id: model.accounts[0].id)
         print("Native API bridge passed: real CLI stdin save, sanitized snapshot decode, persistence and remove.")
     }
 }

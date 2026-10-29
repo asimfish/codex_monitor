@@ -31,12 +31,29 @@ try{
   assert(await evaluate("document.querySelector('#apiNote').textContent.includes('并非官方余额')"));
   await evaluate("document.getElementById('addApi').click()");
   const fill=async(key,value)=>evaluate(`document.getElementById(${JSON.stringify(key)}).value=${JSON.stringify(value)}`);
+  assert(await evaluate("document.getElementById('apiGrantFields').disabled"),'Grant dates are optional during key-only setup');
+  assert.equal(await evaluate("document.getElementById('apiOrg').required"),false,'Organization can be discovered');
+  await fill('apiKey','sk-admin-fabricated-denied-test');
+  await evaluate("document.getElementById('apiForm').requestSubmit()");
+  await until(()=>evaluate("document.getElementById('apiFormError').textContent.includes('403')"),'permission denial');
+  assert.equal(await evaluate("document.querySelectorAll('[data-id]').length"),3,'Failed connection creates no record');
+  await fill('apiKey','sk-admin-fabricated-connect-test');
+  await evaluate("document.getElementById('apiForm').requestSubmit()");
+  await until(()=>evaluate("document.querySelectorAll('[data-id]').length===4"),'key-only verified account');
+  assert.equal(await evaluate("document.getElementById('apiKey').value"),'','Key cleared after saving');
+  const connected=await evaluate("[...document.querySelectorAll('[data-id]')].find(node=>node.innerText.includes('org-connected')).dataset.id");
+  assert(await evaluate(`document.querySelector('[data-id="${connected}"]').innerText.includes('3.25')`),'First costs appear immediately');
+  assert(await evaluate(`document.querySelector('[data-id="${connected}"]').innerText.includes('本月已报告费用')`),'Calendar costs are not presented as grant expiry');
+  assert.equal(await evaluate(`document.querySelector('[data-id="${connected}"] .api-money').textContent`),'—','Unknown grant never becomes a fabricated balance');
+  await evaluate(`window.confirm=()=>true;document.querySelector('[data-id="${connected}"] button[data-act=remove]').click()`);
+  await until(()=>evaluate("document.querySelectorAll('[data-id]').length===3"),'delete connection fixture');
+  await evaluate("document.getElementById('addApi').click();document.getElementById('apiHasGrant').click()");
   await fill('apiLabel','Added account');await fill('apiOrg','org-added');await fill('apiGrant','0');
   await fill('apiStart','2026-10-01T00:00');await fill('apiEnd','2026-11-01T00:00');await fill('apiKey','sk-proj-fabricated-key');
   await evaluate("document.getElementById('apiForm').requestSubmit()");
   await until(()=>evaluate("document.getElementById('apiFormError').textContent.includes('Admin API key')"),'project key denial');
   assert.equal(await evaluate("document.querySelectorAll('[data-id]').length"),3);
-  await fill('apiKey','');await evaluate("document.getElementById('apiForm').requestSubmit()");
+  await fill('apiKey','');await evaluate("document.getElementById('apiManual').click()");await evaluate("document.getElementById('apiForm').requestSubmit()");
   await until(()=>evaluate("document.querySelectorAll('[data-id]').length===4"),'saved manual record');
   const added=await evaluate("[...document.querySelectorAll('[data-id]')].find(node=>node.innerText.includes('Added account')).dataset.id");
   assert(await evaluate(`document.querySelector('[data-id="${added}"]').innerText.includes('0.00')`),'Known zero grant shown');
@@ -55,7 +72,12 @@ try{
   await until(()=>evaluate("document.querySelectorAll('[data-id]').length===3"),'deleted manual record');
   await evaluate("document.getElementById('apiLang').value='en';document.getElementById('apiLang').dispatchEvent(new Event('change'))");
   assert.equal(await evaluate("document.getElementById('apiTitle').textContent"),'API credit overview');
-  assert.deepEqual(errors,[]);console.log('API browser checks passed: manual add/edit/delete/reload, ordinary-key rejection, no key disclosure, explicit estimate, desktop/mobile and EN/ZH.');
+  await evaluate("document.getElementById('addApi').click()");
+  const setupDesktop=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile('/tmp/cm-api-setup-desktop.png',Buffer.from(setupDesktop.data,'base64'));
+  await call('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+  assert(await evaluate("document.getElementById('apiDialog').scrollWidth<=document.getElementById('apiDialog').clientWidth+1"),'Setup fits mobile dialog');
+  const setupMobile=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});await writeFile('/tmp/cm-api-setup-mobile.png',Buffer.from(setupMobile.data,'base64'));
+  assert.deepEqual(errors,[]);console.log('API browser checks passed: key-only verified add, failed authentication retention, monthly costs, manual add/edit/delete/reload, ordinary-key rejection, no key disclosure, explicit estimate, desktop/mobile and EN/ZH.');
 }finally{
   socket?.close();
   for(const child of [chrome,fixture])if(child&&child.exitCode===null){if(child===chrome&&process.platform!=='win32'){try{process.kill(-child.pid,'SIGTERM')}catch{}}else child.kill();await Promise.race([new Promise(resolve=>child.once('exit',resolve)),delay(3000)]);if(child===chrome&&process.platform!=='win32'){try{process.kill(-child.pid,'SIGKILL')}catch{}}}

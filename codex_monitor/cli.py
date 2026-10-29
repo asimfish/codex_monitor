@@ -440,7 +440,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("-y", "--yes", action="store_true")
     s.set_defaults(fn=cmd_remove)
     s = sp.add_parser("api-credits", help="manage independent OpenAI API organization costs and grant estimates")
-    s.add_argument("action", choices=["list", "save", "refresh", "poll", "remove"], nargs="?", default="list")
+    s.add_argument("action", choices=["list", "save", "connect", "refresh", "poll", "remove"], nargs="?", default="list")
     s.add_argument("--id")
     s.set_defaults(fn=cmd_api_credits)
     return p
@@ -448,7 +448,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_api_credits(args):
     manager = ApiCredits()
-    if args.action == "save":
+    if args.action in ("save", "connect"):
         try:
             raw = sys.stdin.read(32769)
             if len(raw) > 32768:
@@ -456,7 +456,7 @@ def cmd_api_credits(args):
             body = json.loads(raw)
         except ValueError:
             raise StoreError("Provide an API account JSON object on standard input") from None
-        manager.save(body)
+        manager.save(body, verify=args.action == "connect")
     elif args.action == "remove":
         if not args.id:
             raise StoreError("Choose an API account ID")
