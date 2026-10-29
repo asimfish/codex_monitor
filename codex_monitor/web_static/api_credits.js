@@ -48,6 +48,8 @@ const words={
     manual:'Manual grant record',
     updated:'Page updated',
     formTitle:'API account',
+    fillGrant:'Add grant details',
+    grantMissing:'Grant amount or actual validity dates are not entered. Costs can be synchronized; remaining credits cannot yet be estimated.',
     error:'Request failed',
     incomplete:'Some amounts are unknown; no combined balance is inferred.',
     setupTitle:'Connect in two steps',
@@ -117,6 +119,8 @@ const words={
     manual:'手动额度记录',
     updated:'页面更新于',
     formTitle:'API 账号',
+    fillGrant:'补充额度',
+    grantMissing:'尚未填写赠送总额或实际有效期。费用可以同步，剩余额度暂时无法估算。',
     error:'请求失败',
     incomplete:'部分金额未知，不推算汇总余额。',
     setupTitle:'两步完成配置',
@@ -157,10 +161,11 @@ const render=()=>{
   el('apiAccounts').innerHTML=state.accounts.length?state.accounts.map(a=>`<article class="api-card" data-id="${a.id}"><header><h2>${esc(a.label)}</h2><div class="small muted">${esc(a.organization)}</div></header>
     <div><span class="small muted">${t('estimate')}</span><div class="api-money ${a.estimated_remaining===null?'unknown':''}">${a.estimated_remaining===null?'—':'$'+money(a.estimated_remaining)}</div><span class="small muted">${t(a.expired?'expired':a.starts_later?'future':!a.has_admin_key?'noKey':a.stale?'stale':'updated')}${!a.stale&&a.last_success?' '+date(a.last_success):''}</span></div>
     <div class="api-values"><div><span class="small muted">${t('total')}</span><b>${a.grant_total===null?t('unknown'):'$'+money(a.grant_total)}</b></div><div><span class="small muted">${t(a.period_mode==='calendar_month'?'monthCost':'cost')}</span><b>${a.costs?'$'+money(a.costs.cost_usd):'—'}</b></div></div>
+    ${a.grant_total===null||a.period_mode==='calendar_month'?`<p class="small muted">${t('grantMissing')}</p>`:''}
     ${a.error?`<div class="err" role="alert">${esc(a.error)}</div>`:''}
     <div class="small muted api-date">${t(a.period_mode==='calendar_month'?'monthPeriod':'expiry')}：${a.period_mode==='calendar_month'?new Date(a.period_start).toLocaleDateString(language==='zh'?'zh-CN':'en-US',{year:'numeric',month:'long',timeZone:'UTC'}):date(a.period_end)}<br>${t('last')}：${date(a.last_success)}<br>${t('attempt')}：${date(a.last_attempt)}<br>${t('next')}：${date(a.next_refresh)}<br>${t('until')}：${date(a.costs?.queried_until)}</div>
     ${a.costs?`<details><summary class="small">${t('days')}</summary><div class="small">${a.costs.days.map(d=>`<div>${date(new Date(d.start_time*1000).toISOString())} · $${money(d.cost_usd)}</div>`).join('')||t('noCosts')}</div></details>`:''}
-    <div class="api-actions"><button data-act="refresh" ${!a.has_admin_key||a.starts_later?'disabled':''}>${t('refresh')}</button><button data-act="edit">${t('edit')}</button><button data-act="remove">${t('remove')}</button></div></article>`).join(''):`<div class="api-card"><h2>${t('empty')}</h2><p class="muted">${t('emptyHint')}</p></div>`;
+    <div class="api-actions"><button data-act="refresh" ${!a.has_admin_key||a.starts_later?'disabled':''}>${t('refresh')}</button>${a.grant_total===null||a.period_mode==='calendar_month'?`<button data-act="grant">${t('fillGrant')}</button>`:''}<button data-act="edit">${t('edit')}</button><button data-act="remove">${t('remove')}</button></div></article>`).join(''):`<div class="api-card"><h2>${t('empty')}</h2><p class="muted">${t('emptyHint')}</p></div>`;
 };
 const poll=async()=>{if(polling)return;polling=true;try{state=await request('/api/credits');render();el('apiError').textContent='';el('apiSync').textContent=t('updated')+' '+date(state.now)}catch(error){el('apiError').textContent=t('failed')+' · '+error.message}finally{polling=false}};
 const local=value=>{const d=new Date(value);return new Date(d-d.getTimezoneOffset()*60000).toISOString().slice(0,16)};
@@ -169,10 +174,10 @@ const updateForm=()=>{
   el('apiGrantFields').hidden=!grant;el('apiGrantFields').disabled=!grant;el('apiMonthHint').hidden=grant;el('apiKey').required=!manual&&!el('apiId').value;el('apiOrg').required=manual;
   el('saveApi').textContent=t(el('apiKey').value.trim()||(!el('apiId').value&&!manual)?(el('apiId').value?'verifyEdit':'verifySave'):'save');
 };
-const edit=account=>{
+const edit=(account,grant=false)=>{
   el('apiForm').reset();el('apiId').value=account?.id||'';el('apiLabel').value=account?.label||'';el('apiOrg').value=/^org-[A-Za-z0-9_-]{1,120}$/.test(account?.organization||'')?account.organization:'';el('apiGrant').value=account?.grant_total??'';el('apiInterval').value=account?.refresh_interval||300;
-  el('apiHasGrant').checked=!!account&&account.period_mode!=='calendar_month';el('apiManual').checked=!!account&&!account.has_admin_key;
-  el('apiStart').value=account?local(account.period_start):'';el('apiEnd').value=account?local(account.period_end):'';el('apiAdvanced').open=el('apiManual').checked;
+  el('apiHasGrant').checked=grant||!!account&&account.period_mode!=='calendar_month';el('apiManual').checked=!!account&&!account.has_admin_key;
+  el('apiStart').value=account&&account.period_mode==='custom'?local(account.period_start):'';el('apiEnd').value=account&&account.period_mode==='custom'?local(account.period_end):'';el('apiAdvanced').open=el('apiManual').checked;
   el('apiKey').value='';el('apiFormError').textContent='';el('apiDialogTitle').textContent=t('formTitle');document.querySelectorAll('[data-text]').forEach(node=>node.textContent=t(node.dataset.text));updateForm();el('apiDialog').showModal();el('apiKey').focus();
 };
 document.querySelectorAll('[data-settings]').forEach(link=>link.addEventListener('click',async event=>{
@@ -186,7 +191,7 @@ el('apiLang').onchange=event=>{language=event.target.value;render()};
 el('refreshAll').onclick=async()=>{el('refreshAll').disabled=true;try{await request('/api/credits/refresh',{});await poll();el('apiSync').textContent=t('queued')}catch(error){el('apiError').textContent=error.message}finally{el('refreshAll').disabled=false}};
 el('apiAccounts').onclick=async event=>{
   const button=event.target.closest('[data-act]');if(!button)return;const id=button.closest('[data-id]').dataset.id, account=state.accounts.find(a=>a.id===id);
-  if(button.dataset.act==='edit'){edit(account);return}if(button.dataset.act==='remove'&&!confirm(t('confirm')))return;
+  if(button.dataset.act==='edit'||button.dataset.act==='grant'){edit(account,button.dataset.act==='grant');return}if(button.dataset.act==='remove'&&!confirm(t('confirm')))return;
   button.disabled=true;try{await request('/api/credits/'+(button.dataset.act==='remove'?'remove':'refresh'),{id});await poll()}catch(error){el('apiError').textContent=error.message}finally{button.disabled=false}
 };
 el('apiForm').onsubmit=async event=>{

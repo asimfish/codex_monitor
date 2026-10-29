@@ -26,6 +26,13 @@ import Foundation
         precondition(model.error == nil && model.accounts[0].periodMode == "calendar_month")
         precondition(model.accounts[0].grantTotal == nil && model.accounts[0].estimatedRemaining == nil)
         await model.run("remove", id: model.accounts[0].id)
+        let examples = DemoData.apiAccounts(now: now)
+        let unknown = examples[0], known = examples[1]
+        precondition(unknown.needsGrantDetails && unknown.estimatedRemaining == nil)
+        precondition(unknown.primaryCaption == "本月费用" && unknown.primaryAmount == "0", "known cost zero must not become an unknown or zero balance")
+        precondition(unknown.grantHint.contains("赠送额度未填写"), "missing grant explains the absence of a balance")
+        precondition(!known.needsGrantDetails && known.primaryCaption == "估算剩余" && known.primaryAmount == "174.50")
+        precondition(known.grantHint.contains("估算余额"))
         print("Native API bridge passed: real CLI stdin save, sanitized snapshot decode, persistence and remove.")
     }
 }

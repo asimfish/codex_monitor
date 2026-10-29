@@ -5,6 +5,24 @@ import Foundation
 enum DemoData {
     static var enabled: Bool { ProcessInfo.processInfo.environment["CODEX_MONITOR_DEMO"] == "1" }
 
+    static func apiAccounts(now: Date = Date()) -> [ApiCreditAccount] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let month = calendar.dateInterval(of: .month, for: now)!
+        return [
+            ApiCreditAccount(id: "api-demo-research", label: "研究 API", organization: "user-demo-research", grantTotal: nil,
+                             periodMode: "calendar_month", periodStart: ISO8601.format(month.start), periodEnd: ISO8601.format(month.end),
+                             refreshInterval: 300, lastSuccess: ISO8601.format(now), nextRefresh: ISO8601.format(now.addingTimeInterval(300)),
+                             estimatedRemaining: nil, error: nil, hasAdminKey: true, expired: false, stale: false,
+                             costs: ApiReportedCosts(costUsd: "0")),
+            ApiCreditAccount(id: "api-demo-work", label: "工作 API", organization: "org-demo-work", grantTotal: "200",
+                             periodMode: "custom", periodStart: ISO8601.format(now.addingTimeInterval(-86400 * 5)), periodEnd: ISO8601.format(now.addingTimeInterval(86400 * 25)),
+                             refreshInterval: 300, lastSuccess: ISO8601.format(now), nextRefresh: ISO8601.format(now.addingTimeInterval(300)),
+                             estimatedRemaining: "174.50", error: nil, hasAdminKey: true, expired: false, stale: false,
+                             costs: ApiReportedCosts(costUsd: "25.50"))
+        ]
+    }
+
     private static func b64url(_ obj: [String: Any]) -> String {
         let data = try! JSONSerialization.data(withJSONObject: obj)
         return data.base64URLEncodedString()

@@ -325,6 +325,7 @@ struct CompactAccountRow: View {
 struct WidgetView: View {
     @ObservedObject var monitor: QuotaMonitor
     @ObservedObject var controller: PanelController
+    @ObservedObject private var apiCredits = ApiCreditModel.shared
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var showLog = false
     @State private var isReordering = false
@@ -346,46 +347,48 @@ struct WidgetView: View {
                 if let error = monitor.annotationError {
                     Text(error).font(.caption2).foregroundStyle(.red)
                 }
-                if monitor.entries.isEmpty {
+                if monitor.entries.isEmpty && apiCredits.accounts.isEmpty {
                     emptyState
                 } else {
                     ForEach(monitor.entries.filter { $0.isActive }) { entry in
                         AccountCard(entry: entry, monitor: monitor, controller: controller, onCollapse: nil)
                     }
-                    if !otherIds.isEmpty { othersHeader }
                 }
             }
             .measureSectionHeight("top")
 
-            if !otherIds.isEmpty {
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(monitor.orderedOtherEntries) { entry in
-                            VStack(alignment: .leading, spacing: 4) {
-                                if isReordering { reorderControls(for: entry) }
-                                if expanded.contains(entry.id) {
-                                    AccountCard(
-                                        entry: entry, monitor: monitor, controller: controller,
-                                        onCollapse: { expanded.remove(entry.id) }
-                                    )
-                                } else {
-                                    CompactAccountRow(
-                                        entry: entry,
-                                        monitor: monitor,
-                                        onExpand: { expanded.insert(entry.id) },
-                                        onSwitch: { confirmSwitch(to: entry) }
-                                    )
-                                }
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ApiCreditWidgetSection(model: apiCredits)
+                    if !otherIds.isEmpty {
+                        Divider().padding(.vertical, 2)
+                        othersHeader
+                    }
+                    ForEach(monitor.orderedOtherEntries) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            if isReordering { reorderControls(for: entry) }
+                            if expanded.contains(entry.id) {
+                                AccountCard(
+                                    entry: entry, monitor: monitor, controller: controller,
+                                    onCollapse: { expanded.remove(entry.id) }
+                                )
+                            } else {
+                                CompactAccountRow(
+                                    entry: entry,
+                                    monitor: monitor,
+                                    onExpand: { expanded.insert(entry.id) },
+                                    onSwitch: { confirmSwitch(to: entry) }
+                                )
                             }
                         }
                     }
-                    .padding(.trailing, 12)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .measureSectionHeight("others")
                 }
-                .scrollIndicators(.visible)
-                .frame(height: min(sectionHeights["others", default: 0], otherAccountsMaxHeight))
+                .padding(.trailing, 12)
+                .fixedSize(horizontal: false, vertical: true)
+                .measureSectionHeight("accounts")
             }
+            .scrollIndicators(.visible)
+            .frame(height: min(sectionHeights["accounts", default: 0], accountListMaxHeight))
 
             VStack(alignment: .leading, spacing: 8) {
                 footer
@@ -410,7 +413,7 @@ struct WidgetView: View {
         .padding(2)
     }
 
-    private var otherAccountsMaxHeight: CGFloat {
+    private var accountListMaxHeight: CGFloat {
         // Reserve the fixed sections, 32 pt outer padding and two 8 pt gaps.
         max(80, min(420, controller.maximumHeight
             - sectionHeights["top", default: 0]
@@ -431,8 +434,9 @@ struct WidgetView: View {
             }
             Button {
                 Task { await monitor.refreshAll() }
+                Task { await apiCredits.run("refresh") }
             } label: {
-                if monitor.isRefreshing {
+                if monitor.isRefreshing || apiCredits.busy {
                     ProgressView().controlSize(.small).frame(width: 16, height: 16)
                 } else {
                     Image(systemName: "arrow.clockwise")
@@ -993,6 +997,7 @@ struct QuotaBar: View {
 struct MenuBarMenu: View {
     @ObservedObject var monitor: QuotaMonitor
     @ObservedObject var controller: PanelController
+    @ObservedObject private var apiCredits = ApiCreditModel.shared
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
 
     var body: some View {
@@ -1011,13 +1016,25 @@ struct MenuBarMenu: View {
                 Text(menuLine(entry))
             }
         }
+        if !apiCredits.accounts.isEmpty {
+            Divider()
+            Text("API 账号")
+            ForEach(apiCredits.accounts) { account in
+                Button("\(account.label) · \(account.primaryCaption) \(apiMoney(account.primaryAmount))") {
+                    ApiCreditsController.shared.open(editing: account, grant: account.needsGrantDetails)
+                }
+            }
+        }
         Divider()
         Button(controller.isVisible ? L.hidePanel : L.showPanel) { controller.toggle() }
         Button(controller.isCollapsed ? L.expandPanel : L.collapsePanel) {
             controller.toggleCollapsed()
             if !controller.isVisible { controller.show() }
         }
-        Button(L.refreshNow) { Task { await monitor.refreshAll() } }
+        Button(L.refreshNow) {
+            Task { await monitor.refreshAll() }
+            Task { await apiCredits.run("refresh") }
+        }
         Picker(L.windowLevel, selection: $controller.mode) {
             ForEach(WindowMode.allCases) { mode in
                 Text(mode.title).tag(mode)
