@@ -277,21 +277,40 @@ menu-bar menu/settings menu. API records are separate from Codex logins and do
 not change the active account. The native window uses the installed
 `~/.local/bin/codex-monitor` helper; rebuild/install the widget after updating.
 
-1. Add a record with a label and the API organization ID (`org-...`). Use one
-   record per organization, even if it has several project keys.
-2. Copy the actual grant amount, start and expiry from that organization's
+1. Open the [official Admin keys page](https://platform.openai.com/settings/organization/admin-keys),
+   sign in, and select the API organization that received your credits. As its
+   **Owner**, create an Admin API key and copy it. If the page is unavailable,
+   check the selected organization and your role; a project/model key
+   (`sk-proj-...`) cannot substitute for an Admin key (`sk-admin-...`).
+2. Click **Add API account**, paste the Admin key, and choose **Verify & add**
+   (「验证并添加」). The account name is optional. The panel makes a read-only
+   official Costs request using Bearer authentication: no extra OAuth login,
+   terminal command, or model request is needed. It detects the organization ID
+   from the response when available, saves only after successful verification,
+   and shows the first reported costs immediately. Failed verification creates
+   no record and preserves the old key when editing.
+3. You can stop here: costs default to the **current calendar month in UTC**,
+   with a five-minute refresh interval. This reporting month rolls over without
+   inventing a new grant or balance. To estimate remaining credits, enable
+   **Add grant amount and actual validity dates** and copy the amount, start
+   and expiry from the organization's
    [official billing page](https://platform.openai.com/settings/organization/billing/overview).
-   Leave the total blank when unknown. The first grant can be prorated; the
-   panel does not assume a subscription amount or generate renewed grants.
-3. Optionally enter an **Admin API key** (`sk-admin-...`) created by the
-   organization owner. A normal project/model key (`sk-proj-...`) cannot read
-   organization costs. Enter keys in the local form, not chat, URLs or shell
-   arguments. Leave the key blank during editing to retain the stored key;
-   removing the API record removes its local key too.
-4. Refresh manually or set the automatic interval (60–3600 seconds, default
-   300). The cards show the reported costs, daily cost breakdown on the web,
-   last successful sync, next scheduled refresh, grant expiry and errors.
-   Automatic polling runs while the web service or native API window is open.
+   Leave the total blank when unknown. The first grant may be prorated; actual
+   grant validity can differ from the calendar month.
+
+**Advanced** lets you enter an organization ID (`org-...`) and change the
+refresh interval (60–3600 seconds). If a successful response omits the ID,
+copy it from [official organization settings](https://platform.openai.com/settings/organization/general)
+and retry. Keep one record per organization, even with several project keys.
+To track a grant before obtaining an Admin key, select **Save a manual record**,
+enter the organization ID under Advanced, and optionally add grant details.
+
+Enter keys only in the local form, never chat, URLs or shell arguments. Leave
+the key blank when editing to retain it; entering a replacement verifies it
+before saving. Removing an API record removes its local key. Cards show reported
+costs, daily cost breakdown on the web, last successful sync, next scheduled
+refresh, grant expiry when configured, and errors. Automatic polling runs while
+the web service or native API window is open.
 
 **Estimated balance = entered grant total − organization reported costs.** It
 is not the official grant balance: discounts, other grants, billing adjustments
@@ -305,7 +324,9 @@ API credentials are stored locally in
 `CODEX_ACCOUNTS_DIR`), with mode 0600 in a 0700 directory. Keys are omitted from
 public snapshots, browser storage and normal CLI output. The CLI commands
 `codex-monitor api-credits list`, `refresh [--id ID]` and `remove --id ID` return
-sanitized JSON; `save` reads a JSON object from standard input. This is local
+sanitized JSON; `save` and `connect` read JSON from standard input. `connect`
+verifies a supplied Admin key before saving; the minimal input contains only
+`admin_key`. No secret belongs in command-line arguments. This is local
 file protection, not encryption at rest.
 
 See the [official subscription API-credit guide](https://developers.openai.com/api/docs/guides/chatgpt-api-credits)
