@@ -135,13 +135,14 @@ function positionMenu(menu){
   const anchor = menu.querySelector('button').getBoundingClientRect();
   if (anchor.bottom <= 0 || anchor.top >= innerHeight) { closeMenus(); return; }
   const margin = 8, gap = 4;
+  const topLimit = Math.max(margin, document.querySelector('.topbar').getBoundingClientRect().bottom + gap);
   const below = Math.max(0, innerHeight - anchor.bottom - gap - margin);
-  const above = Math.max(0, anchor.top - gap - margin);
+  const above = Math.max(0, anchor.top - gap - topLimit);
   const down = below >= dd.scrollHeight + 2 || below >= above;
   dd.style.maxHeight = (down ? below : above) + 'px';
   const size = dd.getBoundingClientRect();
   dd.style.left = Math.max(margin, Math.min(anchor.right - size.width, innerWidth - size.width - margin)) + 'px';
-  dd.style.top = (down ? anchor.bottom + gap : Math.max(margin, anchor.top - gap - size.height)) + 'px';
+  dd.style.top = (down ? anchor.bottom + gap : Math.max(topLimit, anchor.top - gap - size.height)) + 'px';
 }
 function closeMenus(){
   document.querySelectorAll('.menu.open').forEach(menu => {
