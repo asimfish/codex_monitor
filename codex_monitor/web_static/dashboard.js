@@ -1,4 +1,6 @@
 const TOKEN = new URLSearchParams(location.search).get('token') || '';
+document.getElementById('apiCreditsLink').href='/api-credits?'+new URLSearchParams({token:TOKEN});
+document.getElementById('btnApiCredits').onclick=()=>{location.href='/api-credits?'+new URLSearchParams({token:TOKEN,lang:LANG})};
 const I18N = {en: __EN__, zh: __ZH__};
 // Private-mode browsers may deny storage. Keep this tab usable in that case.
 function storage(area) {
@@ -133,13 +135,14 @@ function positionMenu(menu){
   const anchor = menu.querySelector('button').getBoundingClientRect();
   if (anchor.bottom <= 0 || anchor.top >= innerHeight) { closeMenus(); return; }
   const margin = 8, gap = 4;
+  const topLimit = Math.max(margin, document.querySelector('.topbar').getBoundingClientRect().bottom + gap);
   const below = Math.max(0, innerHeight - anchor.bottom - gap - margin);
-  const above = Math.max(0, anchor.top - gap - margin);
+  const above = Math.max(0, anchor.top - gap - topLimit);
   const down = below >= dd.scrollHeight + 2 || below >= above;
   dd.style.maxHeight = (down ? below : above) + 'px';
   const size = dd.getBoundingClientRect();
   dd.style.left = Math.max(margin, Math.min(anchor.right - size.width, innerWidth - size.width - margin)) + 'px';
-  dd.style.top = (down ? anchor.bottom + gap : Math.max(margin, anchor.top - gap - size.height)) + 'px';
+  dd.style.top = (down ? anchor.bottom + gap : Math.max(topLimit, anchor.top - gap - size.height)) + 'px';
 }
 function closeMenus(){
   document.querySelectorAll('.menu.open').forEach(menu => {
@@ -300,6 +303,7 @@ const render = s => {
   document.getElementById('refreshLabel').textContent = t('refreshNow');
   document.getElementById('btnRefresh').disabled = s.refreshing;
   document.getElementById('btnAdd').textContent = '+ '+t('addAccount');
+  document.getElementById('btnApiCredits').textContent = LANG==='zh'?'API 额度':'API credits';
   document.getElementById('btnSettings').title = t('settings');
   document.getElementById('btnSettings').setAttribute('aria-label',t('settings'));
   document.getElementById('btnLog').textContent = t('log');

@@ -51,6 +51,10 @@ def main(command: str) -> None:
                     assert 'id="theme"' in html and 'connectionLost' in html and 'reset-credit-line' in html
                     assert 'class="credit-balance"' in html and 'data-act="rename"' in html
                     assert 'class="reached"' not in html
+                    credits_page = request("/api-credits").decode()
+                    assert 'id="apiAccounts"' in credits_page and 'id="apiKey" type="password"' in credits_page
+                    assert all(marker not in credits_page for marker in ('__STYLE__', '__SCRIPT__'))
+                    assert json.loads(request("/api/credits"))["accounts"] == []
                     state = json.loads(request("/api/state"))
                     assert len(state["accounts"]) == 4
                     assert all("credits_unlimited" in account for account in state["accounts"])

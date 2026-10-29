@@ -138,16 +138,17 @@ git rev-parse HEAD
 
 #### 复现一个确定的源码版本
 
-下面锁定到包含独立隐身登录、取消后账号保留、重复显示修复、原生标签增删改、存档删除和账号重命名功能的 `abffefb` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
+下面锁定到包含 API 组织额度管理、独立隐身登录、取消后账号保留、重复显示修复、原生标签增删改、存档删除和账号重命名功能的 `452b7b4` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach abffefb280a6cc404712ca3a6993dd3c13805377
+git checkout --detach 452b7b4bfbfd8c97996fb52b0beec9d744305de1
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
 bash tests/run_login_tests.sh
+bash tests/run_api_credits_tests.sh
 python3 tests/test_removal.py
 python3 tests/test_rename.py
 bash scripts/build.sh
@@ -267,9 +268,43 @@ bash scripts/install-linux.sh
 无桌面 Linux：在服务器运行 `codex-monitor serve --no-browser`，从本机执行 `ssh -L 7860:127.0.0.1:7860 user@server`，再用服务器输出的完整链接访问。这里的 7860 是网页端口；浏览器账号登录另外使用 1455，远程浏览器登录还需转发 `-L 1455:127.0.0.1:1455`，且本机该端口必须空闲。
 
 
+### OpenAI API 多账号额度
+
+网页顶部点击 **API 额度**；macOS 悬窗的菜单栏菜单／设置菜单点击 **API 额度管理…**。
+API 记录独立于 Codex 登录，不会切换当前账号。原生窗口复用安装后的
+`~/.local/bin/codex-monitor` 命令，更新源码后需重新编译安装悬窗。
+
+1. 添加名称和 API 组织 ID（`org-...`）。同一个组织只记录一次，不按多个项目 Key
+   重复计算额度。
+2. 从该组织的[官方账单页](https://platform.openai.com/settings/organization/billing/overview)
+   照实填写到账总额、开始和到期时间。未知金额可留空。首笔可能按天折算；面板不会
+   猜测套餐额度，也不会在到期后自动生成新赠送。
+3. 可选填组织所有者创建的 **Admin API Key**（`sk-admin-...`），用于自动查费用。
+   普通项目／模型 Key（`sk-proj-...`）没有组织费用权限。Key 在本机表单输入，
+   不要放进聊天、链接或命令参数；编辑时留空保留旧 Key，移除记录会删除其本机 Key。
+4. 可手动刷新，或设置自动间隔（60–3600 秒，默认 300 秒）。卡片显示报告费用、
+   网页每日费用明细、最近成功同步、下次计划刷新、到期时间和错误。
+   网页服务运行或原生 API 窗口打开期间会自动轮询。
+
+**估算剩余＝录入赠送总额－组织报告费用，并非官方赠送余额。** 折扣、其他赠送、
+账单调整和统计延迟都会造成差异。未知不会显示成 0，刷新失败保留旧数据并标注；
+到期后不显示可用余额估算，需照新到账记录更新。不会领取、购买、充值、修改支出限制，
+也不会发送模型请求。
+
+管理 Key 保存在本机 `~/.codex-accounts/_api_accounts/credentials.json`
+（设置 `CODEX_ACCOUNTS_DIR` 时随之改变），文件权限 0600、目录 0700。
+公开快照、浏览器存储和正常命令行输出不含 Key；这属于本机文件权限保护，不是落盘加密。
+`codex-monitor api-credits list`、`refresh [--id ID]`、`remove --id ID`
+输出脱敏 JSON；`save` 从标准输入读取记录。
+
+依据[官方订阅赠送说明](https://developers.openai.com/api/docs/guides/chatgpt-api-credits)
+及[费用接口](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs)。
+赠送绑定 API 组织，按订阅账期到期，不增加 Codex 登录额度；当前使用的官方文档
+没有确立公开的赠送余额查询接口，因此不会把估算标成官方余额。
+
 ### 3.3 验证范围与下载
 
-[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `abffefb` 或更新代码、且显示成功的运行。检查范围如下：
+[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `452b7b4` 或更新代码、且显示成功的运行。检查范围如下：
 
 | 检查 | 已验证环境 | 不代表什么 |
 |---|---|---|
@@ -390,6 +425,9 @@ tests/linux_smoke.sh    Docker 检查：Linux 安装脚本、已安装服务重�
 tests/test_reset_credits.py  重置卡请求格式、确认、重复/并发保护与额度刷新（伪造响应）
 tests/test_web_regressions.py  导入校验、刷新身份/并发保护、登录完成、别名同步、OAuth 转义及禁止凭证缓存
 tests/test_recovery.py     登录取消与暂存保护、额度更新顺序、凭证副本同步、异常响应及重置请求持久化恢复
+tests/test_api_credits.py  组织费用、赠送估算、密钥边界与受保护的管理接口
+tests/check_api_credits_ui.mjs  Chrome 实测 API 增删改、估算、隐私与多屏布局
+tests/run_api_credits_tests.sh  临时存储中的真实原生/Python 命令行桥接
 tests/test_login_retention.py  取消后保留账号/凭证/标签、隐身隔离及重复身份边界
 tests/check_browser_isolation.mjs  使用 Python 隐身启动参数实测两个 Chromium Cookie 存储互相独立
 tests/run_login_tests.sh  原生取消竞态与设备码暂存登录，使用模拟响应（macOS）
@@ -408,6 +446,8 @@ python3 tests/test_web_regressions.py
 python3 tests/test_reset_credits.py                                  # 不消耗真实重置卡
 python3 tests/test_recovery.py
 python3 tests/test_login_retention.py
+python3 tests/test_api_credits.py
+node tests/check_api_credits_ui.mjs
 node tests/check_browser_isolation.mjs
 python3 tests/test_merge_compat.py
 python3 tests/test_git_policy.py

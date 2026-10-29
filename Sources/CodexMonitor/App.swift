@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         PanelController.shared.setup(monitor: QuotaMonitor.shared)
         TagEditorController.shared.previewIfRequested(monitor: QuotaMonitor.shared)
         AccountManagerController.shared.previewIfRequested(monitor: QuotaMonitor.shared)
+        ApiCreditsController.shared.previewIfRequested()
         LoginDebug.runIfRequested()
     }
 

@@ -566,6 +566,7 @@ struct WidgetView: View {
         Divider()
         Button(L.addAccountEllipsis) { addAccount() }
         Button(L.manageAccounts) { AccountManagerController.shared.open(monitor: monitor) }
+        Button("API 额度管理…") { ApiCreditsController.shared.open() }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Button(L.openUsagePage) {
             if let u = URL(string: "https://chatgpt.com/codex/settings/usage") { NSWorkspace.shared.open(u) }
@@ -1034,6 +1035,7 @@ struct MenuBarMenu: View {
             }
         ))
         Button(L.addAccountEllipsis) { LoginWindowController.shared.begin(monitor: monitor, panel: controller) }
+        Button("API 额度管理…") { ApiCreditsController.shared.open() }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Divider()
         Button(L.quit) { NSApp.terminate(nil) }

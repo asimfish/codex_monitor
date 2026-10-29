@@ -121,6 +121,14 @@ try {
   assert.match(await evaluate(alice + ".querySelector('.reset-at').innerText"), /\d{4}\/\d{2}\/\d{2}/);
   await assertCardAlignment('initial desktop');
   await screenshot('dashboard-zh.png');
+  await call('Emulation.setDeviceMetricsOverride', {width:1280,height:720,deviceScaleFactor:1,mobile:false});
+  await evaluate("LANG='en';render(STATE)");
+  for (const name of ['erin','alice','bob']) {
+    await evaluate(`closeMenus();document.querySelector('[data-account="${name}"] [data-act=menu]').click()`);
+    const reachable=await evaluate("(() => {const b=document.getElementById('btnRefresh').getBoundingClientRect();return document.elementFromPoint(b.left+b.width/2,b.top+b.height/2)?.closest('#btnRefresh')!==null})()");
+    assert.equal(reachable,true,'Open account menu must not block the global refresh control: '+name);
+  }
+  await evaluate("closeMenus();LANG='zh';render(STATE)");
   for (const scrollbar of ['default', 'classic']) {
     if (scrollbar === 'classic') {
       await evaluate("const style=document.createElement('style');style.id='classic-scrollbar-test';style.textContent='html::-webkit-scrollbar{width:15px}';document.head.appendChild(style)");

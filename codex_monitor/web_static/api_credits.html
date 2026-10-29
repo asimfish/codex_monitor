@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>API credits · Codex Monitor</title><link rel="icon" href="data:,"><style>
+__STYLE__
+.api-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr));gap:18px;align-items:stretch}
+.api-card{padding:22px;border:1px solid var(--line);border-radius:16px;background:var(--card);display:flex;flex-direction:column;gap:18px;min-width:0}
+.api-card h2{font-size:18px;margin:0;overflow-wrap:anywhere}.api-money{font-size:32px;font-weight:700;color:var(--green);margin:6px 0}.api-values{display:grid;grid-template-columns:1fr 1fr;gap:14px}.api-values b{display:block;margin-top:6px}.api-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}.api-money.unknown{color:var(--muted)}#apiSummary .stat{display:flex;flex-direction:column;align-items:flex-start;gap:6px}.header-actions a{color:var(--accent);text-decoration:none}.api-form{display:grid;grid-template-columns:1fr 1fr;gap:16px}.api-form label{display:flex;flex-direction:column;gap:7px}.api-form .wide{grid-column:1/-1}.api-form input{width:100%}.api-note{padding:16px;border:1px solid var(--line);border-radius:12px;background:var(--card);line-height:1.65}.api-card .small{overflow-wrap:anywhere}#apiDialog{max-width:650px;width:calc(100% - 32px);max-height:90vh;overflow:auto}#apiError{color:var(--red);white-space:pre-wrap}.api-date{font-variant-numeric:tabular-nums}@media(max-width:560px){.api-form{grid-template-columns:1fr}.api-form .wide{grid-column:auto}.api-money{font-size:27px}}
+</style></head><body>
+<div class="topbar"><div class="topbar-inner"><div class="brand"><span class="brandmark">$_</span>OpenAI API</div><div class="header-actions"><a id="back" class="small"></a><select id="apiLang"><option value="en">EN</option><option value="zh">中文</option></select><button id="refreshAll"></button><button class="primary" id="addApi"></button></div></div></div>
+<main class="wrap"><div class="page-heading"><div><div class="eyebrow">API Platform · USD</div><h1 id="apiTitle"></h1><p id="apiSubtitle"></p></div><span id="apiSync" class="small muted"></span></div>
+<p class="api-note" id="apiNote"></p><div id="apiError" role="alert"></div><div id="apiSummary" class="overview"></div><div class="api-grid" id="apiAccounts"></div>
+<p class="small muted"><a href="https://platform.openai.com/settings/organization/billing/overview" target="_blank" rel="noreferrer" id="billingLink"></a> · <a href="https://developers.openai.com/api/docs/guides/chatgpt-api-credits" target="_blank" rel="noreferrer" id="benefitLink"></a></p></main>
+<dialog id="apiDialog" aria-labelledby="apiDialogTitle"><form id="apiForm" class="api-form"><h2 class="wide" id="apiDialogTitle"></h2>
+<input id="apiId" type="hidden"><label class="wide"><span data-text="label"></span><input id="apiLabel" maxlength="80" required autocomplete="off"></label>
+<label class="wide"><span data-text="organization"></span><input id="apiOrg" placeholder="org-..." required autocomplete="off"></label>
+<label class="wide"><span data-text="adminKey"></span><input id="apiKey" type="password" placeholder="sk-admin-..." autocomplete="new-password" spellcheck="false"><span class="small muted" data-text="keyHint"></span></label>
+<label><span data-text="grantTotal"></span><input id="apiGrant" type="number" min="0" max="1000000000" step="0.01" placeholder="USD"></label>
+<label><span data-text="interval"></span><input id="apiInterval" type="number" min="60" max="3600" step="1" value="300" required></label>
+<label><span data-text="periodStart"></span><input id="apiStart" type="datetime-local" required></label><label><span data-text="periodEnd"></span><input id="apiEnd" type="datetime-local" required></label>
+<p class="small muted wide" data-text="periodHint"></p><p id="apiFormError" class="err wide" role="alert"></p>
+<div class="modal-actions wide"><button type="button" id="cancelApi" data-text="cancel"></button><button type="submit" class="primary" id="saveApi" data-text="save"></button></div>
+</form></dialog><script>
+__SCRIPT__
+</script></body></html>

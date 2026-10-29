@@ -39,7 +39,7 @@ def message_errors(message):
 
 def sensitive_path(name):
     path = PurePosixPath(name.lower())
-    internal = {".codex", ".codex-accounts", "_auth_locks", "_reset_requests", "sessions", "__pycache__"}
+    internal = {".codex", ".codex-accounts", "_auth_locks", "_reset_requests", "_api_accounts", "sessions", "__pycache__"}
     leaf = path.name
     return bool(internal.intersection(path.parts)
                 or leaf in {"auth.json", "dashboard.token", "credentials.json", "secrets.json", ".env"}

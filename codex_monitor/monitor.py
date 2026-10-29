@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 
 from . import __version__, browsers, paths, store, usage
 from .annotations import Annotations, account_order, availability
+from .api_credits import ApiCredits
 from .identity import fmt_local, identity, now_utc, to_json_value
 from .oauth import BrowserLogin, DeviceCodeLogin, OAuthError, apply_refreshed, refresh_tokens, sync_refreshed_copies
 from .store import StoreError
@@ -52,6 +53,7 @@ class Monitor:
         self.login_relogin = False
         self._finalized_login = None
         self.annotations = Annotations(paths.accounts_dir())
+        self.api_credits = ApiCredits()
 
     # ------------------------------------------------------------ logging
 
@@ -303,6 +305,14 @@ class Monitor:
     # ------------------------------------------------------------ background
 
     def start_background(self) -> None:
+        def api_costs():
+            while not self._stop.is_set():
+                try:
+                    self.api_credits.refresh()
+                except StoreError:
+                    pass
+                self._stop.wait(30)
+        threading.Thread(target=api_costs, daemon=True).start()
         from . import demo
         if demo.enabled():
             with self.lock:
