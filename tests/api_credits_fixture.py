@@ -35,9 +35,9 @@ with tempfile.TemporaryDirectory(prefix="cm-api-browser-") as temporary:
     def fixture_costs(key, organization, start, end):
         if key != "sk-admin-fabricated-connect-test":
             raise StoreError("Costs access denied (403). Use an organization owner's Admin API key and check the organization ID.")
-        return {"cost_usd": "3.25", "queried_until": format_iso(end), "days": [], "organization": organization or "org-connected"}
+        return {"cost_usd": "3.25", "queried_until": format_iso(end), "days": [], "organization": organization or "user-browser-alias"}
     print("http://127.0.0.1:%d/api-credits?token=api-browser-fixture&lang=zh" % server.server_port, flush=True)
     try:
-        with patch("codex_monitor.api_credits.fetch_costs", side_effect=fixture_costs):
+        with patch("codex_monitor.api_credits.fetch_costs", side_effect=fixture_costs), patch("codex_monitor.browsers.open_regular", return_value=True):
             server.serve_forever()
     finally: server.server_close()

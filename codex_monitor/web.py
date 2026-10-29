@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import __version__, autostart, browsers, paths, store
+from .api_credits import open_settings
 from .monitor import Monitor
 from .oauth import OAuthError
 from .store import StoreError
@@ -182,7 +183,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 name = body["name"]
                 if not isinstance(name, str) or (name not in m.states and store.sanitize(name) != name):
                     raise StoreError("choose an exact account directory name")
-            if path in ("/api/credits/save", "/api/credits/connect"):
+            if path == "/api/credits/open-settings":
+                open_settings(body.get("page"))
+                self._json(200, {"ok": True})
+            elif path in ("/api/credits/save", "/api/credits/connect"):
                 identifier = m.api_credits.save(body, verify=path == "/api/credits/connect")
                 self._json(200, {"ok": True, "id": identifier})
             elif path == "/api/credits/remove":

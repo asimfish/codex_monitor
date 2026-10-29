@@ -1,14 +1,15 @@
 // Verify the production private-launch flags with real Chromium cookie stores.
 import assert from 'node:assert/strict';
 import {execFileSync, spawn} from 'node:child_process';
-import {readFile, rm} from 'node:fs/promises';
+import {mkdtemp, readFile, rm} from 'node:fs/promises';
 import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {fileURLToPath} from 'node:url';
 
 const root=fileURLToPath(new URL('../',import.meta.url));
 const chrome=process.env.CHROME_BIN||(process.platform==='darwin'?'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome':'google-chrome');
 const python=process.env.PYTHON||(process.platform==='win32'?'python':'python3');
-const commands=JSON.parse(execFileSync(python,['-c',`
+const launches=JSON.parse(execFileSync(python,['-c',`
 import json
 from unittest.mock import Mock, patch
 from codex_monitor import browsers
@@ -17,10 +18,14 @@ process.wait.return_value=0
 with patch.object(browsers.paths,'IS_MAC',False), patch.object(browsers,'find_private_browser',return_value=('Google Chrome',[${JSON.stringify(chrome)},'--incognito'])), patch.object(browsers.subprocess,'Popen',return_value=process) as launch:
     browsers.open_private('about:blank')
     browsers.open_private('about:blank')
-print(json.dumps([call.args[0] for call in launch.call_args_list]))
+private_commands=[call.args[0] for call in launch.call_args_list]
+with patch.object(browsers,'find_regular_browser',return_value=('Google Chrome',[${JSON.stringify(chrome)},'--new-window'])), patch.object(browsers.subprocess,'Popen',return_value=process) as launch:
+    browsers.open_regular('about:blank')
+regular_command=launch.call_args.args[0]
+print(json.dumps({'private':private_commands,'regular':regular_command}))
 `],{cwd:root,encoding:'utf8'}));
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-const browsers=[];
+const commands=launches.private, browsers=[];
 const connect=async argv=>{
   const profile=argv.find(arg=>arg.startsWith('--user-data-dir='))?.split('=').slice(1).join('=');
   assert(profile,'Private launch must select its own profile');
@@ -51,7 +56,21 @@ try{
   const second=await connect(commands[1]);
   assert.equal((await second.call('Network.getCookies',{urls:[url]})).cookies.length,0,'New login must not inherit previous private-window cookies');
   assert.equal((await first.call('Network.getCookies',{urls:[url]})).cookies.length,1,'Existing browser session must remain intact');
-  console.log('Private browser isolation passed: two production launch commands use separate cookie stores; existing session preserved.');
+  assert(launches.regular.includes('--new-window'));
+  assert(!launches.regular.some(arg=>/incognito|inprivate|private-window|user-data-dir/.test(arg)),'Normal settings opener adds no private or temporary profile flags');
+  const normalProfile=await mkdtemp(join(tmpdir(),'cm-regular-browser-'));
+  const normalArgv=[...launches.regular.slice(0,-1),'--user-data-dir='+normalProfile,launches.regular.at(-1)];
+  const normal=await connect(normalArgv);
+  assert.equal((await normal.call('Network.getCookies',{urls:[url]})).cookies.length,0,'Normal profile is separate from isolated login');
+  await normal.call('Network.setCookie',{name:'settings_fixture',value:'signed-in',url,expires:Math.floor(Date.now()/1000)+3600});
+  const stopped=new Promise(resolve=>normal.child.once('exit',resolve));
+  await normal.call('Browser.close');await stopped;
+  normal.socket.close();await rm(join(normalProfile,'DevToolsActivePort'),{force:true});
+  const reopened=await connect(normalArgv);
+  const cookies=(await reopened.call('Network.getCookies',{urls:[url]})).cookies;
+  assert(cookies.some(cookie=>cookie.name==='settings_fixture'&&cookie.value==='signed-in'),'Normal settings window retains login cookies after browser restart');
+  assert(!cookies.some(cookie=>cookie.name==='login_fixture'),'Private login cookies never leak into settings');
+  console.log('Private browser isolation passed: two production launch commands use separate cookie stores; existing session preserved; regular settings browser preserves cookies after restart.');
 }finally{
   for(const browser of browsers){
     browser.socket?.close();

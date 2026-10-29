@@ -11,9 +11,34 @@ import uuid
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 
-from . import net, paths, store
+from . import browsers, net, paths, store
 from .identity import format_iso, now_utc, parse_iso
 from .locking import file_lock
+
+SETTINGS_PAGES = {
+    "admin_keys": "https://platform.openai.com/settings/organization/admin-keys",
+    "organization": "https://platform.openai.com/settings/organization/general",
+    "billing": "https://platform.openai.com/settings/organization/billing/overview",
+}
+
+
+def open_settings(page):
+    if not isinstance(page, str) or page not in SETTINGS_PAGES:
+        raise store.StoreError("Choose an official API settings page")
+    if not browsers.open_regular(SETTINGS_PAGES[page]):
+        raise store.StoreError("Could not open a regular browser window. Copy the official link into a normal browser window.")
+
+
+def is_org_id(value):
+    return isinstance(value, str) and bool(re.fullmatch(r"org-[A-Za-z0-9_-]{1,120}", value))
+
+
+def organization_alias(value):
+    if isinstance(value, str):
+        alias = value.strip()
+        if 1 <= len(alias) <= 255 and alias.isprintable() and not alias.startswith("sk-"):
+            return alias
+    return None
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -47,9 +72,10 @@ def fetch_costs(key, organization, start, end):
              "bucket_width": "1d", "limit": 180}
     total, days, cursors, buckets = Decimal(0), [], set(), set()
     headers = {"Authorization": "Bearer " + key, "Accept": "application/json"}
-    if organization:
+    if is_org_id(organization):
         headers["OpenAI-Organization"] = organization
-    observed_org = organization
+    observed_org = organization if is_org_id(organization) else None
+    observed_alias = organization_alias(organization)
     for _ in range(4):
         request = urllib.request.Request(
             "https://api.openai.com/v1/organization/costs?" + urllib.parse.urlencode(query),
@@ -57,10 +83,14 @@ def fetch_costs(key, organization, start, end):
         try:
             with opener.open(request, timeout=20) as response:
                 response_org = getattr(response, "headers", {}).get("openai-organization")
-                if response_org:
-                    if not isinstance(response_org, str) or not re.fullmatch(r"org-[A-Za-z0-9_-]{1,120}", response_org) or (observed_org and observed_org != response_org):
-                        raise store.StoreError("Cost response organization does not match; nothing was saved")
+                if is_org_id(response_org):
+                    if observed_org and observed_org != response_org:
+                        raise store.StoreError("Cost response organization does not match the selected ID. Clear the organization ID in Advanced to use the key's organization; nothing was saved")
                     observed_org = response_org
+                else:
+                    alias = organization_alias(response_org)
+                    if alias:
+                        observed_alias = alias
                 raw = response.read(4 * 1024 * 1024 + 1)
                 if len(raw) > 4 * 1024 * 1024:
                     raise store.StoreError("Cost response exceeds the supported size")
@@ -96,7 +126,7 @@ def fetch_costs(key, organization, start, end):
             days.append({"start_time": stamp, "cost_usd": str(daily)})
         if not payload["has_more"]:
             return {"cost_usd": str(total), "days": sorted(days, key=lambda day: day["start_time"]),
-                    "queried_until": format_iso(end), "organization": observed_org}
+                    "queried_until": format_iso(end), "organization": observed_org or observed_alias}
         cursor = payload.get("next_page")
         if not isinstance(cursor, str) or not cursor or len(cursor) > 2048 or cursor in cursors:
             raise store.StoreError("Invalid cost pagination; incomplete data was discarded")
@@ -144,6 +174,11 @@ class ApiCredits:
     def save(self, body, verify=False):
         if not isinstance(body, dict):
             raise store.StoreError("Invalid API account")
+        identifier = body.get("id")
+        before = self._load()
+        if identifier is not None and (not isinstance(identifier, str) or identifier not in before):
+            raise store.StoreError("API account changed; reload before editing")
+        previous = before.get(identifier, {})
         label = body.get("label", "")
         if isinstance(label, str) and not label.strip():
             label = "OpenAI API"
@@ -153,7 +188,10 @@ class ApiCredits:
         key = body.get("admin_key", "")
         if not isinstance(key, str) or (key and not re.fullmatch(r"sk-admin-[A-Za-z0-9_-]{8,512}", key)):
             raise store.StoreError("Costs require an Admin API key (sk-admin-...), not a project/model key. Leave blank for a manual record.")
-        if not isinstance(organization, str) or (not organization and not (verify and key)) or (organization and not re.fullmatch(r"org-[A-Za-z0-9_-]{1,120}", organization)):
+        if organization == "" and not key and previous:
+            organization = previous["organization"]
+        retained_alias = bool(previous.get("admin_key")) and organization == previous.get("organization")
+        if not isinstance(organization, str) or (not organization and not (verify and key)) or (organization and not is_org_id(organization) and not retained_alias):
             raise store.StoreError("Enter the API organization ID (org-...)")
         mode = body.get("period_mode", "custom" if "period_start" in body or "period_end" in body else "calendar_month")
         if mode not in ("calendar_month", "custom"):
@@ -172,10 +210,6 @@ class ApiCredits:
         interval = body.get("refresh_interval", 300)
         if type(interval) is not int or not 60 <= interval <= 3600:
             raise store.StoreError("Refresh interval must be 60-3600 seconds")
-        identifier = body.get("id")
-        before = self._load()
-        if identifier is not None and (not isinstance(identifier, str) or identifier not in before):
-            raise store.StoreError("API account changed; reload before editing")
         result = None
         if verify and key:
             if identifier is None and len(before) >= 100:
@@ -190,8 +224,8 @@ class ApiCredits:
             accounts = self._load()
             if identifier is not None and (not isinstance(identifier, str) or identifier not in accounts):
                 raise store.StoreError("API account changed; reload before editing")
-            if any(item["organization"] == organization and name != identifier for name, item in accounts.items()):
-                raise store.StoreError("This API organization is already tracked; edit the existing account")
+            if any(name != identifier and ((is_org_id(organization) and item["organization"] == organization) or (key and item["admin_key"] == key)) for name, item in accounts.items()):
+                raise store.StoreError("This API organization or Admin key is already tracked; edit the existing account")
             if identifier is None and len(accounts) >= 100:
                 raise store.StoreError("At most 100 API organizations may be tracked")
             identifier = identifier or uuid.uuid4().hex
