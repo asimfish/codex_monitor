@@ -138,12 +138,12 @@ git rev-parse HEAD
 
 #### 复现一个确定的源码版本
 
-下面锁定到包含 API 组织额度管理、独立隐身登录、取消后账号保留、重复显示修复、原生标签增删改、存档删除和账号重命名功能的 `452b7b4` 提交，只在一个新的目录中编译测试，不替换已安装的应用：
+下面锁定到 `3f0cf4e` 提交，包含悬窗 API 账号分类、简化 Admin Key 配置、组织别名识别和普通浏览器设置窗口，以及独立隐身登录、取消后账号保留、标签编辑和账号管理。只在新目录中编译测试，不替换已安装的应用：
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach 452b7b4bfbfd8c97996fb52b0beec9d744305de1
+git checkout --detach 3f0cf4e9ebeb6d4e3b8b34763338d4ac640fc29d
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
@@ -271,20 +271,34 @@ bash scripts/install-linux.sh
 ### OpenAI API 多账号额度
 
 网页顶部点击 **API 额度**；macOS 悬窗的菜单栏菜单／设置菜单点击 **API 额度管理…**。
+展开原生悬窗后，当前 Codex 账号下方还有独立的 **API 账号** 分类，显示每个 API
+账号的已报告费用或估算余额、同步时间，以及刷新和编辑入口。API 与其他 Codex
+账号放在有高度限制的滚动区域中；分类可单独折叠，长列表可以滚动查看。
 API 记录独立于 Codex 登录，不会切换当前账号。原生窗口复用安装后的
 `~/.local/bin/codex-monitor` 命令，更新源码后需重新编译安装悬窗。
 
-1. 添加名称和 API 组织 ID（`org-...`）。同一个组织只记录一次，不按多个项目 Key
-   重复计算额度。
-2. 从该组织的[官方账单页](https://platform.openai.com/settings/organization/billing/overview)
-   照实填写到账总额、开始和到期时间。未知金额可留空。首笔可能按天折算；面板不会
-   猜测套餐额度，也不会在到期后自动生成新赠送。
-3. 可选填组织所有者创建的 **Admin API Key**（`sk-admin-...`），用于自动查费用。
+1. 点击 **添加 API 账号**，再点 **用普通浏览器打开 Admin Keys 创建页面**。
+   在官方后台切换到领取额度的组织，用该组织 Owner（所有者）身份创建 Admin Key。
+   这个入口使用普通浏览器窗口；添加／重新登录 Codex 账号仍使用独立登录窗口。
+2. 回到本机表单，粘贴 **Admin API Key**（`sk-admin-...`），点击 **验证并添加**。
+   名称可选；组织通常会从成功的费用响应自动识别，包括官方返回的组织别名。
+   如果没有返回组织 ID，再在高级设置里填写 `org-...`。同一组织只记录一次。
    普通项目／模型 Key（`sk-proj-...`）没有组织费用权限。Key 在本机表单输入，
    不要放进聊天、链接或命令参数；编辑时留空保留旧 Key，移除记录会删除其本机 Key。
+3. 添加后可以先查看本自然月费用（UTC），无需先填赠送金额。要估算余额，点击
+   **补充额度**，照[官方账单页](https://platform.openai.com/settings/organization/billing/overview)
+   填写实际到账总额、开始和到期时间。首笔可能按天折算；面板不会猜测套餐额度、
+   把费用月份当作赠送有效期，或在到期后自动生成新赠送。
 4. 可手动刷新，或设置自动间隔（60–3600 秒，默认 300 秒）。卡片显示报告费用、
    网页每日费用明细、最近成功同步、下次计划刷新、到期时间和错误。
-   网页服务运行或原生 API 窗口打开期间会自动轮询。
+   网页服务或原生应用运行期间会自动轮询；不需要一直打开 API 管理窗口。
+
+**验证成功、费用为 $0，不等于赠送总额或剩余为 $0。** Admin Key 使用的 Costs 接口
+不返回赠送总额和剩余额度。金额或实际有效期未填写时，卡片会明确提示，并提供
+“补充额度”入口；它会打开对应账号，保留保存的 Key，余额仍显示为未知。
+
+暂时没有 Admin Key，也可以勾选“仅保存手工记录”，在高级设置填写组织 ID；
+这样的记录不会自动查询费用。
 
 **估算剩余＝录入赠送总额－组织报告费用，并非官方赠送余额。** 折扣、其他赠送、
 账单调整和统计延迟都会造成差异。未知不会显示成 0，刷新失败保留旧数据并标注；
@@ -304,7 +318,7 @@ API 记录独立于 Codex 登录，不会切换当前账号。原生窗口复用
 
 ### 3.3 验证范围与下载
 
-[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `452b7b4` 或更新代码、且显示成功的运行。检查范围如下：
+[自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `3f0cf4e` 或更新代码、且显示成功的运行。检查范围如下：
 
 | 检查 | 已验证环境 | 不代表什么 |
 |---|---|---|
