@@ -141,16 +141,17 @@ git rev-parse HEAD
 
 #### Reproduce a specific source version
 
-This pins commit `abffefb`, which includes isolated private login sessions, cancelled-account retention, duplicate display fixes, native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
+This pins commit `8856008`, which includes API organization credit tracking, isolated private login sessions, cancelled-account retention, duplicate display fixes, native tag editing, individual archive removal and account renaming, in a new directory and builds/tests it without replacing the installed application:
 
 ```bash
 git clone https://github.com/asimfish/codex_monitor.git codex_monitor_repro
 cd codex_monitor_repro
-git checkout --detach abffefb280a6cc404712ca3a6993dd3c13805377
+git checkout --detach 88560080ecacb4cf2094e24f5a4f271c35bf39ed
 bash tests/run_store_tests.sh
 bash tests/run_account_order_tests.sh
 bash tests/run_annotations_tests.sh
 bash tests/run_login_tests.sh
+bash tests/run_api_credits_tests.sh
 python3 tests/test_removal.py
 python3 tests/test_rename.py
 bash scripts/build.sh
@@ -269,9 +270,53 @@ Optional: `codex-monitor autostart install` uses a systemd user service or XDG d
 For a headless server, run `codex-monitor serve --no-browser`, forward the dashboard with `ssh -L 7860:127.0.0.1:7860 user@server`, and open the printed URL locally. Browser account login separately requires forwarding port 1455, which must also be free on your local machine.
 
 
+### OpenAI API organization credits
+
+Open **API credits** in the web header, or **API 额度管理…** in the macOS
+menu-bar menu/settings menu. API records are separate from Codex logins and do
+not change the active account. The native window uses the installed
+`~/.local/bin/codex-monitor` helper; rebuild/install the widget after updating.
+
+1. Add a record with a label and the API organization ID (`org-...`). Use one
+   record per organization, even if it has several project keys.
+2. Copy the actual grant amount, start and expiry from that organization's
+   [official billing page](https://platform.openai.com/settings/organization/billing/overview).
+   Leave the total blank when unknown. The first grant can be prorated; the
+   panel does not assume a subscription amount or generate renewed grants.
+3. Optionally enter an **Admin API key** (`sk-admin-...`) created by the
+   organization owner. A normal project/model key (`sk-proj-...`) cannot read
+   organization costs. Enter keys in the local form, not chat, URLs or shell
+   arguments. Leave the key blank during editing to retain the stored key;
+   removing the API record removes its local key too.
+4. Refresh manually or set the automatic interval (60–3600 seconds, default
+   300). The cards show the reported costs, daily cost breakdown on the web,
+   last successful sync, next scheduled refresh, grant expiry and errors.
+   Automatic polling runs while the web service or native API window is open.
+
+**Estimated balance = entered grant total − organization reported costs.** It
+is not the official grant balance: discounts, other grants, billing adjustments
+and reporting lag can change the relationship. Unknown values are displayed as
+unknown; failed refreshes retain and label old data. Expired grants have no
+estimated usable balance until you enter the next grant. No automatic claim,
+purchase, top-up, spend-limit change or model request occurs.
+
+API credentials are stored locally in
+`~/.codex-accounts/_api_accounts/credentials.json` (or under
+`CODEX_ACCOUNTS_DIR`), with mode 0600 in a 0700 directory. Keys are omitted from
+public snapshots, browser storage and normal CLI output. The CLI commands
+`codex-monitor api-credits list`, `refresh [--id ID]` and `remove --id ID` return
+sanitized JSON; `save` reads a JSON object from standard input. This is local
+file protection, not encryption at rest.
+
+See the [official subscription API-credit guide](https://developers.openai.com/api/docs/guides/chatgpt-api-credits)
+and [Costs API](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs).
+The subscription benefit follows its linked organization's subscription billing
+cycle; it does not increase signed-in Codex quotas. A public endpoint for the
+promotional grant balance is not established by the documentation used here.
+
 ### 3.3 Verification scope and downloads
 
-[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `abffefb` or newer code. The checks cover:
+[Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `8856008` or newer code. The checks cover:
 
 | Check | Verified environment | Limits |
 |---|---|---|
@@ -392,6 +437,9 @@ tests/linux_smoke.sh    Linux installer, installed dashboard restart/tag persist
 tests/test_reset_credits.py  reset-card HTTP contract, confirmation, replay/concurrency guards and quota refresh (fabricated responses)
 tests/test_web_regressions.py  import validation, refresh identity/concurrency guards, login finalization, alias updates, OAuth escaping and credential cache headers
 tests/test_recovery.py     cancelled/staged login integrity, ordered quota commits, alias token sync, malformed responses and durable reset recovery
+tests/test_api_credits.py  organization costs, grant estimates, secret boundaries and authenticated management
+tests/check_api_credits_ui.mjs  real Chrome API CRUD, estimates, privacy and responsive layout
+tests/run_api_credits_tests.sh  real native/Python CLI bridge in temporary storage
 tests/test_login_retention.py  cancelled row/credential/tag retention, private launch isolation and duplicate identity boundaries
 tests/check_browser_isolation.mjs  two real Chromium cookie stores using the Python private-launch flags
 tests/run_login_tests.sh  native cancellation races and staged device login with fabricated responses (macOS)
@@ -410,6 +458,8 @@ python3 tests/test_web_regressions.py
 python3 tests/test_reset_credits.py                                  # no real reset cards consumed
 python3 tests/test_recovery.py
 python3 tests/test_login_retention.py
+python3 tests/test_api_credits.py
+node tests/check_api_credits_ui.mjs
 node tests/check_browser_isolation.mjs
 python3 tests/test_merge_compat.py
 python3 tests/test_git_policy.py
