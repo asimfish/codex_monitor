@@ -275,7 +275,8 @@ For a headless server, run `codex-monitor serve --no-browser`, forward the dashb
 Open **API credits** in the web header, or **API 额度管理…** in the macOS
 menu-bar menu/settings menu. The floating widget and menu-bar account list also
 include a separate **API accounts** category. It shows each API account's
-reported costs or estimated remaining balance, last sync, and refresh/edit
+entered total, reported usage costs and estimated remaining balance side by
+side, plus last sync and refresh/edit
 controls. The widget keeps API and Codex accounts in the same bounded scrolling
 area, with separate category headings. API records are separate from Codex logins and do
 not change the active account. The native window uses the installed
