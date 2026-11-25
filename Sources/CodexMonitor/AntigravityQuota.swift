@@ -281,11 +281,15 @@ enum AntigravityCLI {
 final class AntigravityModel: ObservableObject {
     static let shared = AntigravityModel()
     private static let stripAccountKey = "antigravityStripAccountID"
+    private static let previousSystemEmailKey = "antigravityPreviousSystemEmail"
     @Published private(set) var groups: [AntigravityQuota.Group] = []
     @Published private(set) var lastSync: Date?
     @Published private(set) var error: String?
     @Published private(set) var systemEmail: String?
+    @Published private(set) var previousSystemEmail = UserDefaults.standard.string(forKey: AntigravityModel.previousSystemEmailKey)
     @Published private(set) var systemEligibility: AntigravityCLI.Eligibility?
+    @Published private(set) var systemQuotaIsStale = false
+    private var systemQuotaEmail: String?
     @Published private(set) var busy = false
     @Published private(set) var accounts = AntigravityAccount.load()
     @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
@@ -374,22 +378,39 @@ final class AntigravityModel: ObservableObject {
         busy = true
         defer { busy = false }
         let identity = Task.detached(priority: .utility) { AntigravityCLI.readSystemEmail() }
-        do {
-            let quota = try await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.value
-            groups = quota.groups.filter { !$0.buckets.isEmpty }
-            lastSync = Date()
-            error = nil
-            systemEligibility = nil
-        } catch {
-            // The official command follows the active login. Avoid showing a prior account after a failed read.
-            groups = []
-            lastSync = nil
-            systemEligibility = error as? AntigravityCLI.Eligibility
-            self.error = systemEligibility == nil ? (error as? AntigravityCLI.Failure ?? .failed).rawValue : nil
-        }
-        systemEmail = await identity.value
+        let quota = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.result
+        applySystemRefresh(quota, email: await identity.value)
         for account in accounts where !signingIn.contains(account.id) {
             await refresh(account)
+        }
+    }
+
+    func applySystemRefresh(_ result: Result<AntigravityQuota, Error>, email: String?) {
+        systemEmail = email
+        if let email, email != previousSystemEmail {
+            previousSystemEmail = email
+            UserDefaults.standard.set(email, forKey: Self.previousSystemEmailKey)
+        }
+        switch result {
+        case .success(let quota):
+            groups = quota.groups.filter { !$0.buckets.isEmpty }
+            lastSync = Date()
+            systemQuotaEmail = email
+            error = nil
+            systemEligibility = nil
+            systemQuotaIsStale = false
+        case .failure(let failure):
+            let quotaFailure = failure as? AntigravityCLI.Failure ?? .failed
+            systemEligibility = failure as? AntigravityCLI.Eligibility
+            error = systemEligibility == nil ? quotaFailure.rawValue : nil
+            // A temporary error can reuse a snapshot only after confirming its account.
+            systemQuotaIsStale = systemEligibility == nil && quotaFailure == .failed
+                && email != nil && email == systemQuotaEmail && lastSync != nil
+            if !systemQuotaIsStale {
+                groups = []
+                lastSync = nil
+                systemQuotaEmail = nil
+            }
         }
     }
 
@@ -659,21 +680,19 @@ struct AntigravityWidgetSection: View {
                         Text(model.systemEmail ?? "系统账号").font(.system(size: 12, weight: .semibold)).lineLimit(1)
                         Text("当前系统登录").font(.caption2).foregroundStyle(.secondary)
                             .help("在官方客户端管理系统登录。独立账号的凭证可在对应的账号菜单里复制或导出。")
+                        if model.systemEmail == nil, let email = model.previousSystemEmail {
+                            Text("上次识别：\(email)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                .help("上次识别：\(email)")
+                        }
                     }
-                    Spacer()
-                    Button("添加账号") { model.addAccount() }
-                        .buttonStyle(.link).font(.caption)
-                        .disabled(model.busy || !model.signingIn.isEmpty || DemoData.enabled)
-                }.padding(.horizontal, 4)
-                HStack(spacing: 6) {
-                    if let account = model.stripAccount {
-                        Text("收起栏显示：\(account.name)").lineLimit(1)
-                        Spacer(minLength: 4)
-                        Button("跟随系统登录") { model.setStripAccount(nil) }.buttonStyle(.link)
+                    Spacer(minLength: 4)
+                    if model.stripAccount == nil {
+                        Label("收起栏", systemImage: "checkmark").font(.caption2).foregroundStyle(.secondary)
                     } else {
-                        Text("收起栏跟随系统登录")
+                        Button("显示在收起栏") { model.setStripAccount(nil) }.buttonStyle(.link).font(.caption)
+                            .help("让收起栏的 Gemini 额度跟随当前系统登录")
                     }
-                }.font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
+                }.padding(.horizontal, 4)
                 if let eligibility = model.systemEligibility {
                     AntigravityVerificationNotice(eligibility: eligibility)
                 } else if let error = model.error {
@@ -684,9 +703,16 @@ struct AntigravityWidgetSection: View {
                 }
                 quotaGroups(model.groups)
                 if let lastSync = model.lastSync {
-                    Text("同步 \(Fmt.dateTime.string(from: lastSync))")
+                    Text("\(model.systemQuotaIsStale ? "上次同步（缓存）" : "同步") \(Fmt.dateTime.string(from: lastSync))")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
+                HStack {
+                    Text("独立账号").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("添加账号") { model.addAccount() }
+                        .buttonStyle(.link).font(.caption)
+                        .disabled(model.busy || !model.signingIn.isEmpty || DemoData.enabled)
+                }.padding(.horizontal, 4)
                 ForEach(model.orderedAccounts) { account in
                     savedAccount(account)
                 }

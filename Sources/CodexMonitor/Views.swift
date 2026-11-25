@@ -107,7 +107,8 @@ struct CollapsedStripView: View {
             Divider()
             CompactQuotaMeter(
                 title: "Gemini", remaining: geminiRemaining, reset: gemini?.resetDate,
-                status: geminiRemaining.map { quotaColor(remaining: $0) } ?? .gray,
+                status: antigravity.stripAccount == nil && antigravity.systemQuotaIsStale
+                    ? .yellow : geminiRemaining.map { quotaColor(remaining: $0) } ?? .gray,
                 hasIssue: geminiStatus?.error != nil || geminiStatus?.eligibility != nil,
                 isLoading: antigravity.busy && geminiStatus?.sync == nil
             ).help(gemini.map { "Gemini · \(geminiSource) · \($0.title)" } ?? "Gemini · \(geminiSource)")
