@@ -1,9 +1,7 @@
-"""Relay one official agy sign-in through a disposable Chromium profile."""
+"""Pass a user-submitted authorization code to one isolated agy login."""
 from __future__ import annotations
 
 import contextlib
-import fcntl
-import hmac
 import json
 import os
 from pathlib import Path
@@ -51,33 +49,14 @@ def _auth_state(url):
     return state[0]
 
 
-def _authorization_code(url, state):
-    query = _parameters(url, "antigravity.google", "/oauth-callback")
-    returned = query.get("state", [])
-    if len(returned) != 1 or not returned[0].isascii() or not hmac.compare_digest(returned[0], state):
-        return None
-    if query.get("error"):
-        raise LoginError("Google 授权未完成，可以重新登录。")
-    code = query.get("code", [])
-    if len(code) == 1 and re.fullmatch(r"[A-Za-z0-9._/~-]{1,1024}", code[0]):
-        return code[0]
-    return None
-
-
-def _browser():
-    for name, flag in (("Google Chrome", "--incognito"), ("Microsoft Edge", "--inprivate"),
-                       ("Brave Browser", "--incognito"), ("Chromium", "--incognito")):
-        for base in (Path("/Applications"), Path.home() / "Applications"):
-            binary = base / f"{name}.app/Contents/MacOS/{name}"
-            if os.access(binary, os.X_OK):
-                return str(binary), flag
-    raise LoginError("请安装 Chrome、Edge、Brave 或 Chromium，再重新登录。")
+def _valid_code(code):
+    return re.fullmatch(r"4/[A-Za-z0-9._/~-]{16,1022}", code) is not None
 
 
 @contextlib.contextmanager
 def _agy_login(executable, profile, work):
     # The CLI's terminal auth flow provides Google's PKCE URL and accepts the
-    # matching authorization code. Keep it out of system browsers and logs here.
+    # matching authorization code. The widget opens the URL in the user’s browser.
     opener = work / "open"
     opener.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     opener.chmod(0o700)
@@ -133,139 +112,47 @@ def _login_url(child, master):
     raise LoginError("agy 未返回 Google 登录链接，请重试。")
 
 
-class _ChromePipe:
-    """Minimal DevTools transport over inherited pipes, with no debugging port."""
-
-    def __init__(self, read_fd, write_fd):
-        self.read_fd = read_fd
-        self.write_fd = write_fd
-        self.parent = os.getppid()
-        self.buffer = b""
-        self.serial = 0
-        self.session = None
-        self.frame = None
-        self.state = None
-        self.code = None
-
-    def _message(self, deadline):
-        while b"\0" not in self.buffer:
-            wait = deadline - time.monotonic()
-            if os.getppid() != self.parent:
-                raise LoginError("登录窗口已退出。")
-            if wait <= 0:
-                raise TimeoutError
-            if not select.select([self.read_fd], [], [], min(1, wait))[0]:
-                continue
-            chunk = os.read(self.read_fd, 65536)
-            if not chunk:
-                raise LoginError("隐身浏览器已关闭，可以重新登录。")
-            self.buffer += chunk
-            if len(self.buffer) > 2 * 1024 * 1024:
-                raise LoginError("浏览器响应过大，登录已停止。")
-        raw, self.buffer = self.buffer.split(b"\0", 1)
-        message = json.loads(raw)
-        if (self.state and message.get("sessionId") == self.session
-                and message.get("method") == "Network.requestWillBeSent"):
-            params = message.get("params", {})
-            if params.get("type") == "Document" and params.get("frameId") == self.frame:
-                self.code = self.code or _authorization_code(params.get("request", {}).get("url", ""),
-                                                             self.state)
-        return message
-
-    def call(self, method, params=None, session=None):
-        self.serial += 1
-        request = {"id": self.serial, "method": method, "params": params or {}}
-        if session is not None:
-            request["sessionId"] = session
-        data = memoryview(json.dumps(request).encode("utf-8") + b"\0")
-        while data:
-            data = data[os.write(self.write_fd, data):]
-        end = time.monotonic() + 12
-        while True:
-            reply = self._message(end)
-            if reply.get("id") == self.serial:
-                if "error" in reply:
-                    raise LoginError("无法建立隔离的浏览器登录，请重试。")
-                return reply.get("result", {})
-
-    def authorize(self, url, state):
-        # Use a dedicated in-memory context and attach before navigating. The
-        # official callback page strips its query as soon as it loads.
-        context = self.call("Target.createBrowserContext")["browserContextId"]
-        target = self.call("Target.createTarget", {"url": "about:blank", "browserContextId": context})["targetId"]
-        self.session = self.call("Target.attachToTarget", {"targetId": target, "flatten": True})["sessionId"]
-        self.frame = self.call("Page.getFrameTree", session=self.session)["frameTree"]["frame"]["id"]
-        self.call("Network.enable", session=self.session)
-        self.state = state
-        page = self.call("Page.navigate", {"url": url}, session=self.session)
-        if page.get("errorText"):
-            raise LoginError("无法打开 Google 授权页面，请检查网络后重试。")
-        deadline = time.monotonic() + 300
-        while self.code is None:
-            event = self._message(deadline)
-            if (event.get("method") == "Target.detachedFromTarget"
-                    and event.get("params", {}).get("sessionId") == self.session):
-                raise LoginError("隐身浏览器已关闭，可以重新登录。")
-        return self.code
-
-
-@contextlib.contextmanager
-def _private_browser(binary, flag, work):
-    to_browser, write_fd = os.pipe()
-    read_fd, from_browser = os.pipe()
-    pid = None
-    try:
-        with open(os.devnull, "rb+") as null:
-            # Copy to descriptors above both Chrome's fixed pipe ends and the
-            # Python pipe ends so dup2 ordering cannot overwrite a source.
-            sources = []
+def _read_code(child):
+    deadline = time.monotonic() + 300
+    parent = os.getppid()
+    data = b""
+    while time.monotonic() < deadline:
+        if child.poll() is not None or os.getppid() != parent:
+            raise LoginError("本次登录已结束，请重新登录。")
+        if not select.select([sys.stdin], [], [], 1)[0]:
+            continue
+        part = os.read(sys.stdin.fileno(), 1025)
+        if not part:
+            raise LoginError("登录已取消。")
+        data += part
+        if len(data) > 1025:
+            break
+        if b"\n" in data:
             try:
-                for descriptor in (to_browser, from_browser, null.fileno()):
-                    sources.append(fcntl.fcntl(descriptor, fcntl.F_DUPFD, 10))
-                inp, out, quiet = sources
-                actions = [(os.POSIX_SPAWN_DUP2, source, target)
-                           for source, target in ((inp, 3), (out, 4), (quiet, 0), (quiet, 1), (quiet, 2))]
-                actions += [(os.POSIX_SPAWN_CLOSE, fd) for fd in sources]
-                args = [binary, f"--user-data-dir={work / 'browser'}", flag, "--no-first-run",
-                        "--no-default-browser-check", "--remote-debugging-pipe", "--no-startup-window"]
-                pid = os.posix_spawn(binary, args, _environment(), file_actions=actions, setpgroup=0)
-            finally:
-                for fd in sources:
-                    os.close(fd)
-        os.close(to_browser)
-        os.close(from_browser)
-        to_browser = from_browser = None
-        yield _ChromePipe(read_fd, write_fd)
-    finally:
-        for fd in (to_browser, from_browser, read_fd, write_fd):
-            if fd is not None:
-                os.close(fd)
-        if pid is not None:
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(pid, signal.SIGTERM)
-            for _ in range(20):
-                if os.waitpid(pid, os.WNOHANG)[0]:
-                    break
-                time.sleep(.05)
-            else:
-                with contextlib.suppress(ProcessLookupError):
-                    os.killpg(pid, signal.SIGKILL)
-                os.waitpid(pid, 0)
+                code = data.split(b"\n", 1)[0].decode("ascii")
+            except UnicodeDecodeError:
+                break
+            if _valid_code(code):
+                return code
+            break
+    else:
+        raise TimeoutError
+    raise LoginError("授权码格式不正确，请重新登录后复制 Google 页面给出的新授权码。")
 
 
 def _login(executable, profile, work):
-    browser, flag = _browser()
     with _agy_login(executable, profile, work) as (child, master):
-        url, state = _login_url(child, master)
+        url, _ = _login_url(child, master)
         if url:
-            with _private_browser(browser, flag, work) as chrome:
-                code = chrome.authorize(url, state)
-                os.write(master, code.encode("ascii") + b"\r")
-                deadline = time.monotonic() + 30
-                while child.poll() is None and time.monotonic() < deadline:
-                    _read_terminal(master, .25)
+            # Local pipe to the native widget. Do not log the URL or the code.
+            print(json.dumps({"url": url}), flush=True)
+            code = _read_code(child)
+            os.write(master, code.encode("ascii") + b"\r")
+            deadline = time.monotonic() + 30
+            while child.poll() is None and time.monotonic() < deadline:
+                _read_terminal(master, .25)
         if child.poll() != 0:
-            raise LoginError("agy 没有保存登录结果，请重试。")
+            raise LoginError("授权没有完成。请重新登录，并使用新页面给出的授权码。")
     token = profile / "antigravity-cli" / "antigravity-oauth-token"
     if token.is_symlink() or not token.is_file():
         raise LoginError("没有找到此账号的登录结果，请重试。")
@@ -299,4 +186,4 @@ def run(profile_id, executable):
     except TimeoutError:
         raise LoginError("Google 授权等待超时，可以重新登录。") from None
     except (OSError, ValueError, KeyError):
-        raise LoginError("无法完成隔离的浏览器登录，请重试。") from None
+        raise LoginError("无法完成浏览器登录，请重试。") from None

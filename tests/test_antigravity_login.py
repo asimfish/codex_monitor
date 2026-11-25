@@ -5,10 +5,10 @@ from urllib.parse import urlencode
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 if sys.platform != "win32":
-    from codex_monitor.antigravity_login import LoginError, _authorization_code, _auth_state
+    from codex_monitor.antigravity_login import LoginError, _auth_state, _valid_code
 
 
-@unittest.skipIf(sys.platform == "win32", "browser relay requires POSIX process pipes")
+@unittest.skipIf(sys.platform == "win32", "isolated sign-in requires a POSIX terminal")
 class AntigravityLoginTests(unittest.TestCase):
     state = "login-attempt-fixture-8e6bf2"
 
@@ -26,14 +26,12 @@ class AntigravityLoginTests(unittest.TestCase):
         with self.assertRaises(LoginError):
             _auth_state(oauth + urlencode(query))
 
-    def test_callback_is_bound_to_current_attempt_and_official_origin(self):
-        query = urlencode({"code": "4/fixture-code", "state": self.state})
-        callback = "https://antigravity.google/oauth-callback?" + query
-        self.assertEqual(_authorization_code(callback, self.state), "4/fixture-code")
-        self.assertIsNone(_authorization_code(callback, "another-login-attempt"))
-        self.assertIsNone(_authorization_code(callback + "&code=second", self.state))
-        self.assertIsNone(_authorization_code(callback.replace("antigravity.google", "unrelated.example"), self.state))
-        self.assertIsNone(_authorization_code(callback.replace("/oauth-callback", "/other"), self.state))
+    def test_only_one_authorization_code_can_reach_terminal(self):
+        self.assertTrue(_valid_code("4/fixture-code-123456"))
+        self.assertFalse(_valid_code("4/short"))
+        self.assertFalse(_valid_code("4/fixture-code-123456\nsecond input"))
+        self.assertFalse(_valid_code("https://example.invalid/auth"))
+        self.assertFalse(_valid_code("4/" + "A" * 1023))
 
 
 if __name__ == "__main__":

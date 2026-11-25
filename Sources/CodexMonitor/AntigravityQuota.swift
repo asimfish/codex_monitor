@@ -237,6 +237,11 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
     @Published private(set) var signingIn: Set<UUID> = []
     @Published private(set) var loginProcess: Process?
+    @Published private(set) var loginURL: URL?
+    @Published private(set) var loginHint: String?
+    @Published private(set) var submittingCode = false
+    private var loginInput: FileHandle?
+    private var clipboardVersion = 0
     private var loginCancelled = false
     private var polling: Task<Void, Never>?
 
@@ -288,7 +293,7 @@ final class AntigravityModel: ObservableObject {
     func addAccount() {
         let controller = PanelController.shared
         guard let name = controller.prompt(title: "添加 Antigravity 账号",
-                                           message: "给账号起个名字，然后在隔离的隐身窗口选择 Google 账号。授权成功后会自动回到悬浮窗。",
+                                           message: "给账号起个名字。Google 授权后，在网页复制授权码，再回到悬浮窗点「完成登录」。",
                                            defaultValue: "") else { return }
         guard name.count <= 80, !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               !accounts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
@@ -307,7 +312,12 @@ final class AntigravityModel: ObservableObject {
         loginCancelled = false
         defer {
             signingIn.remove(account.id)
+            try? loginInput?.close()
+            loginInput = nil
             loginProcess = nil
+            loginURL = nil
+            loginHint = nil
+            submittingCode = false
         }
         do {
             let command = try await Task.detached(priority: .utility) { try AntigravityCLI.verifyIsolation() }.value
@@ -316,9 +326,11 @@ final class AntigravityModel: ObservableObject {
             process.executableURL = FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".local/bin/codex-monitor")
             process.arguments = ["antigravity-login", account.id.uuidString, command.path]
+            let input = Pipe()
+            let output = Pipe()
             let diagnostics = Pipe()
-            process.standardInput = FileHandle.nullDevice
-            process.standardOutput = FileHandle.nullDevice
+            process.standardInput = input
+            process.standardOutput = output
             process.standardError = diagnostics
             loginProcess = process
             let failure: String? = try await withCheckedThrowingContinuation { continuation in
@@ -329,8 +341,21 @@ final class AntigravityModel: ObservableObject {
                     let safeError = line.hasPrefix("error: ") ? String(line.dropFirst(7)) : "无法完成浏览器登录，请重试。"
                     continuation.resume(returning: completed.terminationStatus == 0 ? nil : safeError)
                 }
-                do { try process.run() }
-                catch { continuation.resume(throwing: error) }
+                do {
+                    try process.run()
+                    loginInput = input.fileHandleForWriting
+                    _ = fcntl(input.fileHandleForWriting.fileDescriptor, F_SETNOSIGPIPE, 1)
+                    Task {
+                        let url = await Task.detached(priority: .utility) {
+                            Self.readLoginURL(output.fileHandleForReading)
+                        }.value
+                        guard self.loginProcess === process, process.isRunning,
+                              !self.loginCancelled, let url = url else { return }
+                        self.loginURL = url
+                        self.clipboardVersion = NSPasteboard.general.changeCount
+                        self.openLoginBrowser()
+                    }
+                } catch { continuation.resume(throwing: error) }
             }
             guard !loginCancelled else { return }
             if let failure = failure {
@@ -340,6 +365,52 @@ final class AntigravityModel: ObservableObject {
             }
         } catch {
             saved[account.id] = AntigravityAccountStatus(error: (error as? AntigravityCLI.Failure ?? .failed).rawValue)
+        }
+    }
+
+    nonisolated private static func readLoginURL(_ handle: FileHandle) -> URL? {
+        struct Notice: Decodable { let url: String }
+        var line = Data()
+        while line.count < 8192 {
+            guard let byte = handle.readData(ofLength: 1).first else { return nil }
+            if byte == 10 {
+                guard let notice = try? JSONDecoder().decode(Notice.self, from: line),
+                      let parts = URLComponents(string: notice.url), parts.scheme == "https",
+                      parts.host == "accounts.google.com", parts.path == "/o/oauth2/auth",
+                      parts.user == nil, parts.password == nil, parts.port == nil else { return nil }
+                return parts.url
+            }
+            line.append(byte)
+        }
+        return nil
+    }
+
+    func openLoginBrowser(regular: Bool = false) {
+        guard let loginURL = loginURL else { return }
+        if !regular, let browser = PrivateBrowser.installed, browser.open(loginURL.absoluteString) {
+            return
+        }
+        if !NSWorkspace.shared.open(loginURL) {
+            loginHint = "无法打开浏览器。请用受支持的浏览器重试。"
+        }
+    }
+
+    func submitCopiedCode() {
+        guard loginURL != nil, loginProcess?.isRunning == true, let input = loginInput,
+              !submittingCode else { return }
+        let clipboard = NSPasteboard.general
+        guard clipboard.changeCount != clipboardVersion,
+              let code = clipboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              code.range(of: #"\A4/[A-Za-z0-9._/~\-]{16,1022}\z"#, options: .regularExpression) != nil else {
+            loginHint = "请先在这次 Google 授权页面点击「复制到剪贴板」。"
+            return
+        }
+        do {
+            try input.write(contentsOf: Data((code + "\n").utf8))
+            loginHint = nil
+            submittingCode = true
+        } catch {
+            loginHint = "本次登录已结束，请重新登录。"
         }
     }
 
@@ -419,11 +490,20 @@ struct AntigravityWidgetSection: View {
                     .disabled(model.busy || !model.signingIn.isEmpty)
             }
             if signingIn {
-                HStack {
-                    Text(model.loginProcess == nil ? "正在准备独立登录…" : "请在隐身窗口完成 Google 授权。")
-                        .font(.caption2).foregroundStyle(.secondary)
+                Text(model.submittingCode ? "正在核验授权…" : (model.loginURL == nil
+                     ? "正在准备 Google 登录…" : "在 Google 页面复制授权码，再点「完成登录」。"))
+                    .font(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    if model.loginURL != nil {
+                        Button("完成登录") { model.submitCopiedCode() }.buttonStyle(.link)
+                        Button("用普通浏览器打开") { model.openLoginBrowser(regular: true) }
+                            .buttonStyle(.link).disabled(model.submittingCode)
+                    }
                     Spacer()
-                    Button("取消") { model.cancelLogin() }.buttonStyle(.link).font(.caption)
+                    Button("取消") { model.cancelLogin() }.buttonStyle(.link)
+                }.font(.caption)
+                if let hint = model.loginHint {
+                    Text(hint).font(.caption2).foregroundStyle(.secondary)
                 }
             } else if let error = status?.error {
                 Text(error).font(.caption2).foregroundStyle(.secondary)

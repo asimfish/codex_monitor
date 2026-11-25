@@ -375,9 +375,10 @@ while running. After switching accounts in the official app, click refresh to
 see the active account's quotas. Google manages the login in its own client.
 
 To track another Google account, expand **Antigravity**, click **添加账号**,
-and give it a label. Complete Google sign-in in the isolated private window.
-The widget hands the authorization result back to the official `agy` process
-automatically. This flow uses Chrome, Edge, Brave, or Chromium.
+and give it a label. Complete Google sign-in in the browser and click
+**Copy to Clipboard** on the authorization page, then click **完成登录**
+(Finish sign-in) in the widget. Use **用普通浏览器打开** (Open in regular
+browser) to continue the same attempt if Google declines the private window.
 The profile stays on the list if sign-in is
 cancelled. Choose **登录** on that row to retry. The widget updates each
 signed-in profile independently alongside the system login.
