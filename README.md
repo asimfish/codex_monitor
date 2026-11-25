@@ -382,7 +382,7 @@ see the active account's quotas. Google manages the login in its own client.
 |---|---|---|
 | Python tests, `pip install .`, CLI help | GitHub Windows, Linux and macOS runners, Python 3.11 | Does not verify real login, autostart or every desktop interaction on all three platforms |
 | Browser button/recovery tests and installed Linux dashboard | GitHub Ubuntu runner, Chromium; isolated Linux install also checked with Python 3.8 | Login, upstream quota/reset responses and OS autostart actions in browser tests are mocked; no real reset credits are spent |
-| Swift storage/order/shared-tag tests, native build and packaging | `macos-14` runner, Apple Silicon | Does not verify Intel hardware or appearance on every macOS version |
+| Swift storage/order/shared-tag tests, native build and packaging | `macos-15` runner, Apple Silicon | Does not verify Intel hardware or appearance on every macOS version |
 | Native installation, launch at login, real account use | Developer Mac: macOS 26.2, Apple Silicon | Does not guarantee identical transparency on another Mac |
 
 For the compiled app, open the CI link above → the latest successful run → **Artifacts** → `CodexMonitor-macos` (GitHub sign-in is usually required; artifacts expire). The download contains an application ZIP; extract it to obtain `CodexMonitor.app`. This is an Apple Silicon build, ad-hoc signed and not Apple-notarized. Section 3.1's source installer is recommended and also configures autostart. Intel users should build from source.

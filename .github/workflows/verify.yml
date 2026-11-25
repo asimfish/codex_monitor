@@ -81,7 +81,7 @@ jobs:
           PLAYWRIGHT_MODULE="$RUNNER_TEMP/codex-monitor-browser/node_modules/playwright" node tests/test_web_buttons.cjs --http-only
           PLAYWRIGHT_MODULE="$RUNNER_TEMP/codex-monitor-browser/node_modules/playwright" node tests/test_web_buttons.cjs --http-only --reset-only
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - run: bash tests/run_store_tests.sh

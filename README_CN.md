@@ -335,7 +335,7 @@ API 记录独立于 Codex 登录，不会切换当前账号。原生窗口复用
 |---|---|---|
 | Python 测试、`pip install .`、CLI 帮助命令 | GitHub 的 Windows、Linux、macOS runner，Python 3.11 | 不代表真实账号登录、自启或全部桌面交互均在三平台验证 |
 | 网页按钮/恢复流程与安装后的 Linux 服务 | GitHub Ubuntu runner、Chromium；另用 Python 3.8 验证隔离的 Linux 安装 | 浏览器测试中的登录、上游额度/重置接口和系统自启动操作使用模拟响应，不消耗真实重置次数 |
-| Swift 存储/排序/跨端标签测试、原生应用编译和打包 | `macos-14` runner，Apple Silicon | 不代表 Intel 实机或所有 macOS 版本上的显示效果已验证 |
+| Swift 存储/排序/跨端标签测试、原生应用编译和打包 | `macos-15` runner，Apple Silicon | 不代表 Intel 实机或所有 macOS 版本上的显示效果已验证 |
 | 原生应用安装、自启、真实账号使用 | 开发机 macOS 26.2，Apple Silicon | 不保证对方电脑与截图具有相同透明效果 |
 
 下载编译产物：打开上面的 CI 链接 → 最新的成功运行 → 页面底部 **Artifacts** → `CodexMonitor-macos`（下载通常需要登录 GitHub，产物会过期）。下载包中包含应用 ZIP，解压后得到 `CodexMonitor.app`。它是 Apple Silicon 构建，ad-hoc 签名、未经过 Apple 公证；不熟悉手动安装时，优先按 3.1 从源码安装，脚本会一并配置自启。Intel 用户请从源码编译。
