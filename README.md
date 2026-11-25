@@ -384,7 +384,10 @@ paste into its authorization code field. Reopen that window from the account
 row or menu bar. Use **用普通浏览器打开** (Open in regular browser) to continue
 the same attempt if Google declines the private window.
 The profile stays on the list if sign-in is
-cancelled. Choose **登录** on that row to retry. The widget updates each
+cancelled. Choose **登录** on that row to retry. The Google email below the
+local account name identifies the actual login. Re-login starts a new Google
+authorization and keeps the previous login if cancelled or unsuccessful.
+The widget updates each
 signed-in profile independently alongside the system login. On a signed-in
 profile, **显示在收起栏** (Show in collapsed strip) selects its Gemini quota for
 the collapsed widget. Click the same button on the system row to restore the
