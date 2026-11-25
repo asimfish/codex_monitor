@@ -395,8 +395,13 @@ verification entry on that account's card, then refresh it.
 Additional profiles need `agy` 1.5.16 or later and a successful check of the
 CLI's local file storage isolation. The official CLI keeps each profile's
 credentials under its own private directory in
-`~/Library/Application Support/CodexMonitor/Antigravity`. The quota widget
-only handles the profile label, sync status and reported quota data.
+`~/Library/Application Support/CodexMonitor/Antigravity`. Open **⋯** beside
+a saved profile to copy its credential or path, reveal it in Finder, or export
+the original `antigravity-oauth-token` file. Keep copied or exported credentials
+private. The same menu offers rename, red tags, manual or automatic ordering,
+sign-out, and removal. Signing out keeps the row available for re-login.
+Removing a profile moves its directory to `_deleted` under the same root.
+Manage the system login through the official Antigravity app.
 
 ### 3.3 Verification scope and downloads
 
