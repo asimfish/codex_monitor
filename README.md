@@ -365,7 +365,8 @@ promotional grant balance is not established by the documentation used here.
 Install the official [Antigravity app and CLI](https://antigravity.google/docs/install).
 The widget finds `agy` in `~/.local/bin`, `/opt/homebrew/bin` or `/usr/local/bin`
 and requires version 1.1.11 or newer. Expand **Antigravity** in the widget and
-click **登录 / 切换** to open the official app, then sign in with Google there.
+click **打开官方客户端** (Open official client) to sign in or switch the system
+account in Antigravity's account settings.
 If you already signed in to `agy`, the widget can use that session immediately.
 
 The refresh button reads the [official model quota command](https://antigravity.google/docs/cli/commands/usage).
@@ -383,7 +384,10 @@ row or menu bar. Use **用普通浏览器打开** (Open in regular browser) to c
 the same attempt if Google declines the private window.
 The profile stays on the list if sign-in is
 cancelled. Choose **登录** on that row to retry. The widget updates each
-signed-in profile independently alongside the system login.
+signed-in profile independently alongside the system login. On a signed-in
+profile, **显示在收起栏** (Show in collapsed strip) selects its Gemini quota for
+the collapsed widget. **跟随系统登录** (Follow system login) restores the default
+source. Use the official app's account settings to change the system login itself.
 The system row shows the email reported by the official CLI. If Google
 authorized an account and Antigravity requests further verification, use the
 verification entry on that account's card, then refresh it.
@@ -417,7 +421,7 @@ For the compiled app, open the CI link above → the latest successful run → *
 | Other accounts | one-line rows (click a row to expand, ˄ to collapse) or **Expand all / Collapse all**; each has **Switch** and a ⧉ menu: copy `auth.json` contents, copy path, reveal in Finder, export…, re-login… |
 | Account tags | Add/edit controls on every card; edit existing text, add new tags or delete with the trash button, then save to sync with the web |
 | Manage accounts | Open from the widget footer or settings to see all archive names, emails and paths; rename archives or remove individual aliases with a local backup |
-| Strip | Codex and Gemini each show the lowest remaining percentage for their current login and its reset countdown when available. Click the bottom arrow to expand. |
+| Strip | Codex uses the active login. Gemini follows the system login by default or uses the account selected in Antigravity. Each meter shows the lowest remaining percentage and its reset countdown when available. Click the bottom arrow to expand. |
 
 Colours: green > 50 % remaining, orange 20–50 %, red ≤ 20 % or limit reached; yellow dot = showing cached data; grey = not loaded yet.
 
