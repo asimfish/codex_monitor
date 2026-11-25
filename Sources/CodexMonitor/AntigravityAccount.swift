@@ -113,4 +113,5 @@ struct AntigravityAccountStatus {
     var sync: Date?
     var error: String?
     var eligibility: AntigravityCLI.Eligibility?
+    var email: String?
 }

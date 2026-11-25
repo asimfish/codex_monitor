@@ -449,6 +449,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_antigravity_login)
     s = sp.add_parser("antigravity-identity", help="read the current Antigravity account for the macOS widget")
     s.add_argument("agy")
+    s.add_argument("--profile", help="look up an isolated account by UUID")
     s.set_defaults(fn=cmd_antigravity_identity)
     return p
 
@@ -493,7 +494,7 @@ def cmd_antigravity_identity(args):
         raise StoreError("Antigravity identity lookup is supported on macOS.")
     from .antigravity_login import LoginError, read_system_email
     try:
-        email = read_system_email(args.agy)
+        email = read_system_email(args.agy, args.profile)
     except (LoginError, OSError, ValueError):
         email = None
     print(json.dumps({"email": email}, ensure_ascii=False))

@@ -10,6 +10,7 @@ import re
 import select
 import shlex
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,11 @@ import uuid
 
 class LoginError(Exception):
     """Messages must not include provider URLs, credentials, or terminal output."""
+
+
+_TOKEN_NAME = "antigravity-oauth-token"
+_DATA_DIR = "antigravity-cli"
+_TOKEN_LIMIT = 64 * 1024
 
 
 def _environment():
@@ -146,19 +152,21 @@ def _login(executable, profile, work):
     args = [executable, "acp", "--login", "--gemini-dir", str(profile), "--app-data-dir", "antigravity-cli"]
     with _terminal(args, work, env) as (child, master):
         url, _ = _login_url(child, master)
-        if url:
-            # Local pipe to the native widget. Do not log the URL or the code.
-            print(json.dumps({"url": url}), flush=True)
-            code = _read_code(child)
-            os.write(master, code.encode("ascii") + b"\r")
-            deadline = time.monotonic() + 30
-            while child.poll() is None and time.monotonic() < deadline:
-                _read_terminal(master, .25)
+        if not url:
+            raise LoginError("agy 未开启新的 Google 授权，请重试。")
+        # Local pipe to the native widget. Do not log the URL or the code.
+        print(json.dumps({"url": url}), flush=True)
+        code = _read_code(child)
+        os.write(master, code.encode("ascii") + b"\r")
+        deadline = time.monotonic() + 30
+        while child.poll() is None and time.monotonic() < deadline:
+            _read_terminal(master, .25)
         if child.poll() != 0:
             raise LoginError("授权没有完成。请重新登录，并使用新页面给出的授权码。")
-    token = profile / "antigravity-cli" / "antigravity-oauth-token"
-    if token.is_symlink() or not token.is_file():
+    token = profile / _DATA_DIR / _TOKEN_NAME
+    if not _valid_token_file(token):
         raise LoginError("没有找到此账号的登录结果，请重试。")
+    return token
 
 
 def _check_executable(executable):
@@ -167,8 +175,31 @@ def _check_executable(executable):
         raise LoginError("找不到已验证的官方 agy。")
 
 
-def read_system_email(executable):
+def _profile_directory(profile_id):
+    root = Path.home() / "Library/Application Support/CodexMonitor/Antigravity"
+    try:
+        profile = root / str(uuid.UUID(profile_id)).upper()
+    except ValueError:
+        raise LoginError("Antigravity 账号 ID 无效。") from None
+    if any(path.is_symlink() for path in (root, profile, profile / _DATA_DIR)):
+        raise LoginError("Antigravity 账号目录不能是符号链接。")
+    return profile
+
+
+def _valid_token_file(token):
+    try:
+        info = token.lstat()
+    except FileNotFoundError:
+        return False
+    return (stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+            and info.st_nlink == 1 and 0 < info.st_size <= _TOKEN_LIMIT)
+
+
+def read_system_email(executable, profile_id=None):
     _check_executable(executable)
+    profile = _profile_directory(profile_id) if profile_id is not None else None
+    if profile is not None and not _valid_token_file(profile / _DATA_DIR / _TOKEN_NAME):
+        return None
     with tempfile.TemporaryDirectory(prefix="codex-monitor-agy-identity-") as tmp:
         work = Path(tmp)
         hook = work / "status.py"
@@ -187,7 +218,12 @@ def read_system_email(executable):
             "    os.replace(part, path)\n", encoding="utf-8")
         command = shlex.join([sys.executable, str(hook)])
         settings = json.dumps({"statusLine": {"type": "command", "command": command, "enabled": True}})
-        with _terminal([executable, "--settings", settings], work, _terminal_environment(work)) as (child, master):
+        args = [executable, "--settings", settings]
+        env = _terminal_environment(work)
+        if profile is not None:
+            args += ["--gemini_dir", str(profile), "--app_data_dir", _DATA_DIR]
+            env["AGY_CLI_FORCE_FILE_TOKEN_STORAGE"] = "1"
+        with _terminal(args, work, env) as (child, master):
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 # Startup can briefly show a sign-in prompt while loading the
@@ -203,14 +239,8 @@ def read_system_email(executable):
 
 
 def run(profile_id, executable):
-    root = Path.home() / "Library/Application Support/CodexMonitor/Antigravity"
-    try:
-        profile = root / str(uuid.UUID(profile_id)).upper()
-    except ValueError:
-        raise LoginError("Antigravity 账号 ID 无效。") from None
+    profile = _profile_directory(profile_id)
     _check_executable(executable)
-    if root.is_symlink() or profile.is_symlink():
-        raise LoginError("Antigravity 账号目录不能是符号链接。")
     profile.mkdir(mode=0o700, parents=True, exist_ok=True)
     profile.chmod(0o700)
     os.umask(0o077)
@@ -220,8 +250,17 @@ def run(profile_id, executable):
 
     signal.signal(signal.SIGTERM, stop)
     try:
-        with tempfile.TemporaryDirectory(prefix="codex-monitor-agy-login-") as tmp:
-            _login(executable, profile, Path(tmp))
+        with tempfile.TemporaryDirectory(prefix=".sign-in-", dir=profile) as tmp:
+            work = Path(tmp)
+            staging = work / "profile"
+            staging.mkdir(mode=0o700)
+            token = _login(executable, staging, work)
+            # agy can reuse an existing session. Authorize in an empty profile
+            # so cancellation or failed sign-in leaves the existing login intact.
+            destination = _profile_directory(profile_id) / _DATA_DIR
+            destination.mkdir(mode=0o700, exist_ok=True)
+            os.chmod(token, 0o600)
+            os.replace(token, destination / _TOKEN_NAME)
     except TimeoutError:
         raise LoginError("Google 授权等待超时，可以重新登录。") from None
     except (OSError, ValueError, KeyError):

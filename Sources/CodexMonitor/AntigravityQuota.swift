@@ -215,7 +215,7 @@ enum AntigravityCLI {
         return Eligibility(url: url)
     }
 
-    static func readSystemEmail() -> String? {
+    static func readEmail(profile: AntigravityAccount? = nil) -> String? {
         struct Identity: Decodable { let email: String? }
         guard let command = try? executable() else { return nil }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("codex-monitor-agy-" + UUID().uuidString)
@@ -224,7 +224,13 @@ enum AntigravityCLI {
                                                     attributes: [.posixPermissions: 0o700])
             defer { try? FileManager.default.removeItem(at: directory) }
             let helper = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/codex-monitor")
-            let result = try run(helper, ["antigravity-identity", command.path], in: directory)
+            var arguments = ["antigravity-identity", command.path]
+            if let profile {
+                _ = try verifyIsolation()
+                guard profile.hasToken else { return nil }
+                arguments += ["--profile", profile.id.uuidString]
+            }
+            let result = try run(helper, arguments, in: directory)
             guard result.status == 0 else { return nil }
             return try JSONDecoder().decode(Identity.self, from: result.output).email
         } catch {
@@ -377,7 +383,7 @@ final class AntigravityModel: ObservableObject {
         guard !busy, !DemoData.enabled else { return }
         busy = true
         defer { busy = false }
-        let identity = Task.detached(priority: .utility) { AntigravityCLI.readSystemEmail() }
+        let identity = Task.detached(priority: .utility) { AntigravityCLI.readEmail() }
         let quota = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.result
         applySystemRefresh(quota, email: await identity.value)
         for account in accounts where !signingIn.contains(account.id) {
@@ -419,18 +425,21 @@ final class AntigravityModel: ObservableObject {
             saved[account.id] = nil
             return
         }
-        do {
-            let quota = try await Task.detached(priority: .utility) {
-                try AntigravityCLI.readQuota(profile: account.directory)
-            }.value
-            saved[account.id] = AntigravityAccountStatus(groups: quota.groups.filter { !$0.buckets.isEmpty }, sync: Date())
-        } catch {
-            if let eligibility = error as? AntigravityCLI.Eligibility {
-                saved[account.id] = AntigravityAccountStatus(eligibility: eligibility)
+        let identity = Task.detached(priority: .utility) { AntigravityCLI.readEmail(profile: account) }
+        let result = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota(profile: account.directory) }.result
+        let email = await identity.value
+        let status: AntigravityAccountStatus
+        switch result {
+        case .success(let quota):
+            status = AntigravityAccountStatus(groups: quota.groups.filter { !$0.buckets.isEmpty }, sync: Date(), email: email)
+        case .failure(let failure):
+            if let eligibility = failure as? AntigravityCLI.Eligibility {
+                status = AntigravityAccountStatus(eligibility: eligibility, email: email)
             } else {
-                saved[account.id] = AntigravityAccountStatus(error: (error as? AntigravityCLI.Failure ?? .failed).rawValue)
+                status = AntigravityAccountStatus(error: (failure as? AntigravityCLI.Failure ?? .failed).rawValue, email: email)
             }
         }
+        saved[account.id] = status
     }
 
     func refreshSavedAccount(_ account: AntigravityAccount) async {
@@ -556,7 +565,7 @@ final class AntigravityModel: ObservableObject {
             }
             guard !loginCancelled else { return }
             if let failure = failure {
-                saved[account.id] = AntigravityAccountStatus(error: failure)
+                saved[account.id, default: AntigravityAccountStatus()].error = failure
                 loginResult = .failed(failure)
             } else {
                 await refresh(account)
@@ -568,7 +577,7 @@ final class AntigravityModel: ObservableObject {
             }
         } catch {
             let reason = (error as? AntigravityCLI.Failure ?? .failed).rawValue
-            saved[account.id] = AntigravityAccountStatus(error: reason)
+            saved[account.id, default: AntigravityAccountStatus()].error = reason
             loginResult = .failed(reason)
         }
     }
@@ -726,7 +735,12 @@ struct AntigravityWidgetSection: View {
         let hasToken = account.hasToken
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text(account.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(account.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    if let email = status?.email, email.caseInsensitiveCompare(account.name) != .orderedSame {
+                        Text(email).font(.caption2).foregroundStyle(.secondary).lineLimit(1).help(email)
+                    }
+                }
                 Spacer()
                 if account.id == model.stripAccount?.id {
                     Label("收起栏", systemImage: "checkmark").font(.caption2).foregroundStyle(.secondary)

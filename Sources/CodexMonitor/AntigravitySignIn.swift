@@ -63,6 +63,9 @@ private struct AntigravitySignInView: View {
                 case .authorized:
                     Label("登录已保存，面板会继续同步额度。", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
+                    if let email = model.saved[account.id]?.email {
+                        Text("Google 账号：\(email)").font(.callout).textSelection(.enabled)
+                    }
                 case .verification(let eligibility):
                     AntigravityVerificationNotice(eligibility: eligibility)
                 case .cancelled:
@@ -80,7 +83,7 @@ private struct AntigravitySignInView: View {
                     Button("关闭", action: close).keyboardShortcut(.defaultAction)
                 }
             } else {
-                Text("在 Google 网页授权后，复制页面上的授权码。在下方粘贴，或直接点「完成登录」提交刚复制的授权码。")
+                Text("在 Google 网页选择要登录的账号，再复制授权码。在下方粘贴，或直接点「完成登录」提交刚复制的授权码。")
                     .fixedSize(horizontal: false, vertical: true)
                 SecureField("粘贴 Google 授权码", text: $code)
                     .textFieldStyle(.roundedBorder)
