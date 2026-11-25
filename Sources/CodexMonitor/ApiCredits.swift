@@ -198,11 +198,11 @@ struct ApiCreditWidgetSection: View {
                 }
                 ForEach(model.accounts) { account in
                     VStack(alignment: .leading, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(account.label).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                            Spacer(minLength: 8)
-                            Text(account.primaryCaption).font(.caption2).foregroundStyle(.secondary)
-                            Text(apiMoney(account.primaryAmount)).font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        Text(account.label).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        HStack(alignment: .top, spacing: 8) {
+                            amountColumn("总额度", account.grantTotal)
+                            amountColumn("已使用", account.costs?.costUsd)
+                            amountColumn("估算剩余", account.estimatedRemaining)
                         }
                         Text(account.grantHint).font(.caption2).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         HStack {
@@ -225,6 +225,15 @@ struct ApiCreditWidgetSection: View {
             }
         }
         .accessibilityIdentifier("api-account-section")
+    }
+
+    private func amountColumn(_ title: String, _ value: String?) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title).font(.caption2).foregroundStyle(.secondary)
+            Text(apiMoney(value))
+                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .lineLimit(1).minimumScaleFactor(0.65)
+        }.frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
