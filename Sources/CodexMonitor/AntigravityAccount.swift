@@ -114,4 +114,6 @@ struct AntigravityAccountStatus {
     var error: String?
     var eligibility: AntigravityCLI.Eligibility?
     var email: String?
+    var planTier: String?
+    var remainingCredits: Int?
 }

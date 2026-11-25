@@ -492,12 +492,12 @@ def cmd_antigravity_login(args):
 def cmd_antigravity_identity(args):
     if not paths.IS_MAC:
         raise StoreError("Antigravity identity lookup is supported on macOS.")
-    from .antigravity_login import LoginError, read_system_email
+    from .antigravity_login import LoginError, read_identity
     try:
-        email = read_system_email(args.agy, args.profile)
+        identity = read_identity(args.agy, args.profile)
     except (LoginError, OSError, ValueError):
-        email = None
-    print(json.dumps({"email": email}, ensure_ascii=False))
+        identity = None
+    print(json.dumps(identity or {"email": None}, ensure_ascii=False))
 
 
 def main(argv: Optional[List[str]] = None) -> None:

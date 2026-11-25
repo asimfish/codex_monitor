@@ -195,7 +195,7 @@ def _valid_token_file(token):
             and info.st_nlink == 1 and 0 < info.st_size <= _TOKEN_LIMIT)
 
 
-def read_system_email(executable, profile_id=None):
+def read_identity(executable, profile_id=None):
     _check_executable(executable)
     profile = _profile_directory(profile_id) if profile_id is not None else None
     if profile is not None and not _valid_token_file(profile / _DATA_DIR / _TOKEN_NAME):
@@ -210,11 +210,12 @@ def read_system_email(executable, profile_id=None):
             "import json, os, sys\n"
             "state = json.load(sys.stdin)\n"
             "email = state.get('email')\n"
+            "tier = state.get('plan_tier')\n"
             "if state.get('product') == 'antigravity' and isinstance(email, str):\n"
             "    path = " + repr(str(capture)) + "\n"
             "    part = path + '.' + str(os.getpid())\n"
             "    with open(part, 'w') as out:\n"
-            "        json.dump({'email': email}, out)\n"
+            "        json.dump({'email': email, 'plan_tier': tier}, out)\n"
             "    os.replace(part, path)\n", encoding="utf-8")
         command = shlex.join([sys.executable, str(hook)])
         settings = json.dumps({"statusLine": {"type": "command", "command": command, "enabled": True}})
@@ -230,9 +231,13 @@ def read_system_email(executable, profile_id=None):
                 # system keychain. Wait for the authoritative status payload.
                 _read_terminal(master, .25)
                 if capture.is_file():
-                    email = json.loads(capture.read_text(encoding="utf-8")).get("email")
+                    state = json.loads(capture.read_text(encoding="utf-8"))
+                    email = state.get("email")
                     if isinstance(email, str) and re.fullmatch(r"[^\s@]{1,100}@[^\s@]{1,150}", email):
-                        return email
+                        tier = state.get("plan_tier")
+                        if not isinstance(tier, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._+-]{0,29}", tier):
+                            tier = None
+                        return {"email": email, "plan_tier": tier}
                 if child.poll() is not None:
                     break
     return None

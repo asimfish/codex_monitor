@@ -69,7 +69,7 @@ class AntigravityLoginTests(unittest.TestCase):
                 patch.multiple(antigravity_login, _profile_directory=lambda _id: Path(directory),
                                _check_executable=lambda _command: None), \
                 patch.object(antigravity_login, "_terminal") as terminal:
-            self.assertIsNone(antigravity_login.read_system_email("agy", "fixture"))
+            self.assertIsNone(antigravity_login.read_identity("agy", "fixture"))
             terminal.assert_not_called()
 
 

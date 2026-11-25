@@ -724,15 +724,7 @@ struct AccountCard: View {
                     .foregroundStyle(.orange)
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(entry.isActive ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(entry.isActive ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
-        )
+        .quotaCardStyle(highlighted: entry.isActive)
         .help(entry.profile.authURL.path)
     }
 
@@ -988,28 +980,52 @@ func quotaColor(remaining r: Double) -> Color {
 struct WindowRow: View {
     let window: RateLimitWindow
 
-    private var color: Color { quotaColor(remaining: window.remainingPercent) }
+    var body: some View {
+        QuotaWindowRow(label: window.label, remaining: window.remainingPercent, reset: window.resetDate)
+    }
+}
+
+struct QuotaWindowRow: View {
+    let label: String
+    let remaining: Double?
+    let reset: Date?
+    var disabled = false
+    var showsUsed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                Text(window.label)
+                Text(label)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .leading)
-                QuotaBar(fraction: window.remainingPercent / 100, color: color)
-                Text(L.remaining(Fmt.percent(window.remainingPercent)))
+                    .lineLimit(1).minimumScaleFactor(0.8).help(label)
+                QuotaBar(fraction: (remaining ?? 0) / 100, color: remaining.map(quotaColor(remaining:)) ?? .gray)
+                Text(disabled ? "已停用" : remaining.map { L.remaining(Fmt.percent($0)) } ?? L.dash)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .frame(width: 78, alignment: .trailing)
             }
-            if let d = window.resetDate {
-                Text(L.resetAt(Fmt.dateTime.string(from: d), Fmt.countdown(to: d)))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 52)
+            if !disabled && (reset != nil || (showsUsed && remaining != nil)) {
+                HStack(spacing: 4) {
+                    if let reset { Text(L.resetAt(Fmt.dateTime.string(from: reset), Fmt.countdown(to: reset))) }
+                    if showsUsed, let remaining {
+                        Spacer(minLength: 2)
+                        Text("已用 \(Fmt.percent(100 - remaining))").monospacedDigit()
+                    }
+                }
+                .font(.caption2).foregroundStyle(.secondary).padding(.leading, 52)
             }
         }
+    }
+}
+
+extension View {
+    func quotaCardStyle(highlighted: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return padding(10)
+            .background(highlighted ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05), in: shape)
+            .overlay { shape.strokeBorder(highlighted ? Color.accentColor.opacity(0.35) : .clear, lineWidth: 1) }
     }
 }
 

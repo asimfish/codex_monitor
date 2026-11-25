@@ -5,6 +5,7 @@ struct AntigravityQuota: Decodable {
     struct Group: Decodable {
         let name: String
         let buckets: [Bucket]
+        var description: String? = nil
     }
 
     struct Bucket: Decodable {
@@ -26,12 +27,33 @@ struct AntigravityQuota: Decodable {
             remainingFraction.flatMap { (0...1).contains($0) ? $0 : nil }
         }
 
-        var resetDate: Date? {
-            resetTime.flatMap(ISO8601.parse).flatMap { $0 > Date() ? $0 : nil }
-        }
+        var reportedResetDate: Date? { resetTime.flatMap(ISO8601.parse) }
+        var resetDate: Date? { reportedResetDate.flatMap { $0 > Date() ? $0 : nil } }
     }
 
     let groups: [Group]
+    var remainingCredits: Int? = nil
+
+    private enum CodingKeys: String, CodingKey { case groups }
+
+    static func decodeCredits(_ data: Data) -> Int? {
+        struct Credits: Decodable {
+            struct Command: Decodable {
+                struct Payload: Decodable { let remainingCredits: Int }
+                let name: String
+                let data: Payload
+            }
+            let status: String
+            let numTurns: Int
+            let command: Command
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        guard let reply = try? decoder.decode(Credits.self, from: data),
+              reply.status == "SUCCESS", reply.numTurns == 0, reply.command.name == "credits",
+              reply.command.data.remainingCredits >= 0 else { return nil }
+        return reply.command.data.remainingCredits
+    }
 
     static func tightestGeminiBucket(in groups: [Group]) -> Bucket? {
         groups.filter { $0.name.localizedCaseInsensitiveContains("Gemini") }
@@ -66,6 +88,11 @@ struct AntigravityQuota: Decodable {
 }
 
 enum AntigravityCLI {
+    struct Identity: Decodable {
+        let email: String?
+        let planTier: String?
+    }
+
     struct Eligibility: Error {
         static let message = "Google 已登录，需完成 Antigravity 账号验证后才能读取额度。"
         let url: URL?
@@ -135,7 +162,12 @@ enum AntigravityCLI {
             guard supportsProfiles(versionText) else { throw Failure.profilesUnsupported }
             try verifyIsolation(command, version: versionText, in: directory)
         }
-        return try query(command, profile: profile, in: directory)
+        var quota = try query(command, profile: profile, in: directory)
+        let arguments = profileArguments(profile) + ["-p", "/credits", "--output-format", "json", "--print-timeout", "6s"]
+        if let credits = try? run(command, arguments, in: directory, isolated: profile != nil, timeout: 9), credits.status == 0 {
+            quota.remainingCredits = AntigravityQuota.decodeCredits(credits.output)
+        }
+        return quota
     }
 
     static func verifyIsolation() throws -> URL {
@@ -181,9 +213,12 @@ enum AntigravityCLI {
         throw Failure.profilesUnsupported
     }
 
+    private static func profileArguments(_ profile: URL?) -> [String] {
+        profile.map { ["--gemini_dir", $0.path, "--app_data_dir", "antigravity-cli"] } ?? []
+    }
+
     private static func query(_ command: URL, profile: URL?, in directory: URL) throws -> AntigravityQuota {
-        let profileArguments = profile.map { ["--gemini_dir", $0.path, "--app_data_dir", "antigravity-cli"] } ?? []
-        let arguments = profileArguments + ["-p", "/usage", "--output-format", "json", "--print-timeout", "15s"]
+        let arguments = profileArguments(profile) + ["-p", "/usage", "--output-format", "json", "--print-timeout", "15s"]
         let result = try run(command, arguments, in: directory, isolated: profile != nil)
         if result.status != 0 {
             let output = String(decoding: result.output + result.diagnostics, as: UTF8.self)
@@ -215,8 +250,7 @@ enum AntigravityCLI {
         return Eligibility(url: url)
     }
 
-    static func readEmail(profile: AntigravityAccount? = nil) -> String? {
-        struct Identity: Decodable { let email: String? }
+    static func readIdentity(profile: AntigravityAccount? = nil) -> Identity? {
         guard let command = try? executable() else { return nil }
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("codex-monitor-agy-" + UUID().uuidString)
         do {
@@ -232,13 +266,16 @@ enum AntigravityCLI {
             }
             let result = try run(helper, arguments, in: directory)
             guard result.status == 0 else { return nil }
-            return try JSONDecoder().decode(Identity.self, from: result.output).email
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            return try decoder.decode(Identity.self, from: result.output)
         } catch {
             return nil
         }
     }
 
-    private static func run(_ executable: URL, _ arguments: [String], in directory: URL, isolated: Bool = false)
+    private static func run(_ executable: URL, _ arguments: [String], in directory: URL,
+                            isolated: Bool = false, timeout seconds: Double = 25)
         throws -> (status: Int32, output: Data, diagnostics: Data) {
         let stdout = directory.appendingPathComponent("out")
         let stderr = directory.appendingPathComponent("err")
@@ -269,8 +306,8 @@ enum AntigravityCLI {
         let kill = DispatchWorkItem {
             if process.isRunning { Darwin.kill(process.processIdentifier, SIGKILL) }
         }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 25, execute: timeout)
-        DispatchQueue.global().asyncAfter(deadline: .now() + 27, execute: kill)
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: timeout)
+        DispatchQueue.global().asyncAfter(deadline: .now() + seconds + 2, execute: kill)
         process.waitUntilExit()
         timeout.cancel()
         kill.cancel()
@@ -292,6 +329,8 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var lastSync: Date?
     @Published private(set) var error: String?
     @Published private(set) var systemEmail: String?
+    @Published private(set) var systemPlan: String?
+    @Published private(set) var systemCredits: Int?
     @Published private(set) var previousSystemEmail = UserDefaults.standard.string(forKey: AntigravityModel.previousSystemEmailKey)
     @Published private(set) var systemEligibility: AntigravityCLI.Eligibility?
     @Published private(set) var systemQuotaIsStale = false
@@ -346,7 +385,12 @@ final class AntigravityModel: ObservableObject {
 
     var stripStatus: AntigravityAccountStatus? {
         if let account = stripAccount { return saved[account.id] }
-        return AntigravityAccountStatus(groups: groups, sync: lastSync, error: error, eligibility: systemEligibility)
+        return systemStatus
+    }
+
+    var systemStatus: AntigravityAccountStatus {
+        AntigravityAccountStatus(groups: groups, sync: lastSync, error: error, eligibility: systemEligibility,
+                                email: systemEmail, planTier: systemPlan, remainingCredits: systemCredits)
     }
 
     func setStripAccount(_ account: AntigravityAccount?) {
@@ -368,6 +412,8 @@ final class AntigravityModel: ObservableObject {
         if DemoData.enabled {
             groups = DemoData.antigravityGroups()
             systemEmail = "gemini@example.com"
+            systemPlan = "Pro"
+            systemCredits = 120
             lastSync = Date()
             return
         }
@@ -383,16 +429,18 @@ final class AntigravityModel: ObservableObject {
         guard !busy, !DemoData.enabled else { return }
         busy = true
         defer { busy = false }
-        let identity = Task.detached(priority: .utility) { AntigravityCLI.readEmail() }
+        let identity = Task.detached(priority: .utility) { AntigravityCLI.readIdentity() }
         let quota = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.result
-        applySystemRefresh(quota, email: await identity.value)
+        let account = await identity.value
+        applySystemRefresh(quota, email: account?.email, plan: account?.planTier)
         for account in accounts where !signingIn.contains(account.id) {
             await refresh(account)
         }
     }
 
-    func applySystemRefresh(_ result: Result<AntigravityQuota, Error>, email: String?) {
+    func applySystemRefresh(_ result: Result<AntigravityQuota, Error>, email: String?, plan: String? = nil) {
         systemEmail = email
+        systemPlan = plan
         if let email, email != previousSystemEmail {
             previousSystemEmail = email
             UserDefaults.standard.set(email, forKey: Self.previousSystemEmailKey)
@@ -400,6 +448,7 @@ final class AntigravityModel: ObservableObject {
         switch result {
         case .success(let quota):
             groups = quota.groups.filter { !$0.buckets.isEmpty }
+            systemCredits = quota.remainingCredits
             lastSync = Date()
             systemQuotaEmail = email
             error = nil
@@ -414,6 +463,7 @@ final class AntigravityModel: ObservableObject {
                 && email != nil && email == systemQuotaEmail && lastSync != nil
             if !systemQuotaIsStale {
                 groups = []
+                systemCredits = nil
                 lastSync = nil
                 systemQuotaEmail = nil
             }
@@ -425,18 +475,20 @@ final class AntigravityModel: ObservableObject {
             saved[account.id] = nil
             return
         }
-        let identity = Task.detached(priority: .utility) { AntigravityCLI.readEmail(profile: account) }
+        let identity = Task.detached(priority: .utility) { AntigravityCLI.readIdentity(profile: account) }
         let result = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota(profile: account.directory) }.result
-        let email = await identity.value
-        let status: AntigravityAccountStatus
+        let identityResult = await identity.value
+        var status = AntigravityAccountStatus(email: identityResult?.email, planTier: identityResult?.planTier)
         switch result {
         case .success(let quota):
-            status = AntigravityAccountStatus(groups: quota.groups.filter { !$0.buckets.isEmpty }, sync: Date(), email: email)
+            status.groups = quota.groups.filter { !$0.buckets.isEmpty }
+            status.sync = Date()
+            status.remainingCredits = quota.remainingCredits
         case .failure(let failure):
             if let eligibility = failure as? AntigravityCLI.Eligibility {
-                status = AntigravityAccountStatus(eligibility: eligibility, email: email)
+                status.eligibility = eligibility
             } else {
-                status = AntigravityAccountStatus(error: (failure as? AntigravityCLI.Failure ?? .failed).rawValue, email: email)
+                status.error = (failure as? AntigravityCLI.Failure ?? .failed).rawValue
             }
         }
         saved[account.id] = status
@@ -660,150 +712,6 @@ final class AntigravityModel: ObservableObject {
             }
         } else {
             workspace.open(URL(string: "https://antigravity.google/docs/install")!)
-        }
-    }
-}
-
-struct AntigravityWidgetSection: View {
-    @ObservedObject var model: AntigravityModel
-    @AppStorage("antigravityExpanded") private var expanded = true
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Button { expanded.toggle() } label: {
-                    Label("Antigravity", systemImage: expanded ? "chevron.down" : "chevron.right")
-                        .font(.caption.weight(.semibold))
-                }.buttonStyle(.plain)
-                Spacer()
-                Button("打开官方客户端") { model.openLogin() }.buttonStyle(.link).font(.caption)
-                    .help("在官方 Antigravity 的账号设置中切换系统登录")
-                Button { Task { await model.refresh() } } label: {
-                    if model.busy { ProgressView().controlSize(.mini) }
-                    else { Image(systemName: "arrow.clockwise") }
-                }.buttonStyle(.plain).disabled(model.busy).help("刷新 Antigravity 额度")
-            }.padding(.horizontal, 4)
-            if expanded {
-                HStack {
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(model.systemEmail ?? "系统账号").font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                        Text("当前系统登录").font(.caption2).foregroundStyle(.secondary)
-                            .help("在官方客户端管理系统登录。独立账号的凭证可在对应的账号菜单里复制或导出。")
-                        if model.systemEmail == nil, let email = model.previousSystemEmail {
-                            Text("上次识别：\(email)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                                .help("上次识别：\(email)")
-                        }
-                    }
-                    Spacer(minLength: 4)
-                    if model.stripAccount == nil {
-                        Label("收起栏", systemImage: "checkmark").font(.caption2).foregroundStyle(.secondary)
-                    } else {
-                        Button("显示在收起栏") { model.setStripAccount(nil) }.buttonStyle(.link).font(.caption)
-                            .help("让收起栏的 Gemini 额度跟随当前系统登录")
-                    }
-                }.padding(.horizontal, 4)
-                if let eligibility = model.systemEligibility {
-                    AntigravityVerificationNotice(eligibility: eligibility)
-                } else if let error = model.error {
-                    Text(error).font(.caption2).foregroundStyle(.secondary)
-                } else if model.groups.isEmpty {
-                    Text(model.busy ? "正在读取额度…" : "登录 Antigravity 后可查看额度。")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-                quotaGroups(model.groups)
-                if let lastSync = model.lastSync {
-                    Text("\(model.systemQuotaIsStale ? "上次同步（缓存）" : "同步") \(Fmt.dateTime.string(from: lastSync))")
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-                HStack {
-                    Text("独立账号").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                    Spacer()
-                    Button("添加账号") { model.addAccount() }
-                        .buttonStyle(.link).font(.caption)
-                        .disabled(model.busy || !model.signingIn.isEmpty || DemoData.enabled)
-                }.padding(.horizontal, 4)
-                ForEach(model.orderedAccounts) { account in
-                    savedAccount(account)
-                }
-            }
-        }.accessibilityIdentifier("antigravity-section")
-    }
-
-    private func savedAccount(_ account: AntigravityAccount) -> some View {
-        let status = model.saved[account.id]
-        let signingIn = model.signingIn.contains(account.id)
-        let hasToken = account.hasToken
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(account.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                    if let email = status?.email, email.caseInsensitiveCompare(account.name) != .orderedSame {
-                        Text(email).font(.caption2).foregroundStyle(.secondary).lineLimit(1).help(email)
-                    }
-                }
-                Spacer()
-                if account.id == model.stripAccount?.id {
-                    Label("收起栏", systemImage: "checkmark").font(.caption2).foregroundStyle(.secondary)
-                } else if hasToken && !signingIn {
-                    Button("显示在收起栏") { model.setStripAccount(account) }
-                        .buttonStyle(.link).font(.caption)
-                        .help("用此账号的 Gemini 额度更新收起栏")
-                }
-                if hasToken && !signingIn {
-                    Button { Task { await model.refreshSavedAccount(account) } } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }.buttonStyle(.plain).help("刷新此账号额度").disabled(model.busy)
-                }
-                Button(signingIn ? "打开登录窗口" : (hasToken ? "重新登录" : "登录")) {
-                    if signingIn { model.showSignInWindow() }
-                    else { Task { await model.login(account) } }
-                }.buttonStyle(.link).font(.caption)
-                    .disabled(!signingIn && (model.busy || !model.signingIn.isEmpty))
-                AntigravityAccountMenu(account: account, hasToken: hasToken, model: model)
-            }
-            EditableAccountTags(annotation: account.annotation ?? AccountAnnotation()) {
-                AntigravityAccountMenu.editTags(account, model: model)
-            }
-            if signingIn {
-                Text(model.submittingCode ? "正在核验授权…" : "请在 Antigravity 登录窗口提交授权码。")
-                    .font(.caption2).foregroundStyle(.secondary)
-            } else if let eligibility = status?.eligibility {
-                AntigravityVerificationNotice(eligibility: eligibility)
-            } else if let error = status?.error {
-                Text(error).font(.caption2).foregroundStyle(.secondary)
-            } else if let status = status, let sync = status.sync {
-                quotaGroups(status.groups)
-                Text("同步 \(Fmt.dateTime.string(from: sync))").font(.caption2).foregroundStyle(.secondary)
-            } else {
-                Text(hasToken ? "等待同步" : "尚未登录").font(.caption2).foregroundStyle(.secondary)
-            }
-        }.padding(10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private func quotaGroups(_ groups: [AntigravityQuota.Group]) -> some View {
-        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-            VStack(alignment: .leading, spacing: 6) {
-                Text(group.name).font(.system(size: 12, weight: .semibold))
-                ForEach(Array(group.buckets.enumerated()), id: \.offset) { _, bucket in
-                    HStack(spacing: 8) {
-                        Text(bucket.title)
-                        Spacer()
-                        if bucket.disabled == true {
-                            Text("已停用").foregroundStyle(.secondary)
-                        } else {
-                            if let date = bucket.resetDate {
-                                Text("重置 \(Fmt.dateTime.string(from: date))").foregroundStyle(.secondary)
-                            }
-                            Text(bucket.fraction.map { "剩余 " + $0.formatted(.percent.precision(.fractionLength(0))) } ?? "—")
-                                .fontWeight(.semibold).monospacedDigit()
-                        }
-                    }.font(.caption)
-                }
-            }
-            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
         }
     }
 }
