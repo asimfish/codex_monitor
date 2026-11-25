@@ -417,7 +417,7 @@ For the compiled app, open the CI link above → the latest successful run → *
 | Other accounts | one-line rows (click a row to expand, ˄ to collapse) or **Expand all / Collapse all**; each has **Switch** and a ⧉ menu: copy `auth.json` contents, copy path, reveal in Finder, export…, re-login… |
 | Account tags | Add/edit controls on every card; edit existing text, add new tags or delete with the trash button, then save to sync with the web |
 | Manage accounts | Open from the widget footer or settings to see all archive names, emails and paths; rename archives or remove individual aliases with a local backup |
-| Strip | status dot, vertical quota bar, remaining %, short countdown; only the bottom arrow expands (the rest just drags) |
+| Strip | Codex and Gemini each show the lowest remaining percentage for their current login and its reset countdown when available. Click the bottom arrow to expand. |
 
 Colours: green > 50 % remaining, orange 20–50 %, red ≤ 20 % or limit reached; yellow dot = showing cached data; grey = not loaded yet.
 
