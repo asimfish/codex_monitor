@@ -236,10 +236,11 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var accounts = AntigravityAccount.load()
     @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
     @Published private(set) var signingIn: Set<UUID> = []
-    @Published private(set) var loginProcess: Process?
+    private var loginProcess: Process?
     @Published private(set) var loginURL: URL?
     @Published private(set) var loginHint: String?
     @Published private(set) var submittingCode = false
+    @Published private(set) var loginResult: AntigravitySignInResult?
     private var loginInput: FileHandle?
     private var clipboardVersion = 0
     private var loginCancelled = false
@@ -293,7 +294,7 @@ final class AntigravityModel: ObservableObject {
     func addAccount() {
         let controller = PanelController.shared
         guard let name = controller.prompt(title: "添加 Antigravity 账号",
-                                           message: "给账号起个名字。Google 授权后，在网页复制授权码，再回到悬浮窗点「完成登录」。",
+                                           message: "给账号起个名字。完成 Google 授权后，在 Antigravity 登录窗口提交授权码。",
                                            defaultValue: "") else { return }
         guard name.count <= 80, !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               !accounts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
@@ -310,7 +311,10 @@ final class AntigravityModel: ObservableObject {
         guard signingIn.isEmpty, !DemoData.enabled else { return }
         signingIn.insert(account.id)
         loginCancelled = false
+        loginResult = nil
+        showSignInWindow()
         defer {
+            if loginCancelled { loginResult = .cancelled }
             signingIn.remove(account.id)
             try? loginInput?.close()
             loginInput = nil
@@ -360,12 +364,21 @@ final class AntigravityModel: ObservableObject {
             guard !loginCancelled else { return }
             if let failure = failure {
                 saved[account.id] = AntigravityAccountStatus(error: failure)
+                loginResult = .failed(failure)
             } else {
+                loginResult = .authorized
                 await refresh(account)
             }
         } catch {
-            saved[account.id] = AntigravityAccountStatus(error: (error as? AntigravityCLI.Failure ?? .failed).rawValue)
+            let reason = (error as? AntigravityCLI.Failure ?? .failed).rawValue
+            saved[account.id] = AntigravityAccountStatus(error: reason)
+            loginResult = .failed(reason)
         }
+    }
+
+    func showSignInWindow() {
+        guard let account = accounts.first(where: { signingIn.contains($0.id) }) else { return }
+        AntigravitySignInWindow.shared.show(account: account, model: self)
     }
 
     nonisolated private static func readLoginURL(_ handle: FileHandle) -> URL? {
@@ -396,21 +409,33 @@ final class AntigravityModel: ObservableObject {
     }
 
     func submitCopiedCode() {
-        guard loginURL != nil, loginProcess?.isRunning == true, let input = loginInput,
-              !submittingCode else { return }
+        guard loginURL != nil, !submittingCode else { return }
         let clipboard = NSPasteboard.general
         guard clipboard.changeCount != clipboardVersion,
-              let code = clipboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
-              code.range(of: #"\A4/[A-Za-z0-9._/~\-]{16,1022}\z"#, options: .regularExpression) != nil else {
+              let code = clipboard.string(forType: .string) else {
             loginHint = "请先在这次 Google 授权页面点击「复制到剪贴板」。"
             return
+        }
+        submitCode(code)
+    }
+
+    @discardableResult
+    func submitCode(_ raw: String) -> Bool {
+        guard loginURL != nil, loginProcess?.isRunning == true, let input = loginInput,
+              !submittingCode else { return false }
+        let code = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard code.range(of: #"\A4/[A-Za-z0-9._/~\-]{16,1022}\z"#, options: .regularExpression) != nil else {
+            loginHint = "请使用这次 Google 授权页面给出的授权码。"
+            return false
         }
         do {
             try input.write(contentsOf: Data((code + "\n").utf8))
             loginHint = nil
             submittingCode = true
+            return true
         } catch {
             loginHint = "本次登录已结束，请重新登录。"
+            return false
         }
     }
 
@@ -484,27 +509,15 @@ struct AntigravityWidgetSection: View {
             HStack {
                 Text(account.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer()
-                Button(account.hasToken ? "重新登录" : "登录") {
-                    Task { await model.login(account) }
+                Button(signingIn ? "打开登录窗口" : (account.hasToken ? "重新登录" : "登录")) {
+                    if signingIn { model.showSignInWindow() }
+                    else { Task { await model.login(account) } }
                 }.buttonStyle(.link).font(.caption)
-                    .disabled(model.busy || !model.signingIn.isEmpty)
+                    .disabled(!signingIn && (model.busy || !model.signingIn.isEmpty))
             }
             if signingIn {
-                Text(model.submittingCode ? "正在核验授权…" : (model.loginURL == nil
-                     ? "正在准备 Google 登录…" : "在 Google 页面复制授权码，再点「完成登录」。"))
+                Text(model.submittingCode ? "正在核验授权…" : "请在 Antigravity 登录窗口提交授权码。")
                     .font(.caption2).foregroundStyle(.secondary)
-                HStack(spacing: 8) {
-                    if model.loginURL != nil {
-                        Button("完成登录") { model.submitCopiedCode() }.buttonStyle(.link)
-                        Button("用普通浏览器打开") { model.openLoginBrowser(regular: true) }
-                            .buttonStyle(.link).disabled(model.submittingCode)
-                    }
-                    Spacer()
-                    Button("取消") { model.cancelLogin() }.buttonStyle(.link)
-                }.font(.caption)
-                if let hint = model.loginHint {
-                    Text(hint).font(.caption2).foregroundStyle(.secondary)
-                }
             } else if let error = status?.error {
                 Text(error).font(.caption2).foregroundStyle(.secondary)
             } else if let status = status, let sync = status.sync {

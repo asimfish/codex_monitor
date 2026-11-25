@@ -578,6 +578,9 @@ struct WidgetView: View {
         Button("Antigravity 登录 / 切换…") { antigravity.openLogin() }
         Button("添加 Antigravity 账号…") { antigravity.addAccount() }
             .disabled(antigravity.busy || !antigravity.signingIn.isEmpty || DemoData.enabled)
+        if !antigravity.signingIn.isEmpty {
+            Button("打开 Antigravity 登录窗口…") { antigravity.showSignInWindow() }
+        }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Button(L.openUsagePage) {
             if let u = URL(string: "https://chatgpt.com/codex/settings/usage") { NSWorkspace.shared.open(u) }
@@ -1065,6 +1068,9 @@ struct MenuBarMenu: View {
         Button("Antigravity 登录 / 切换…") { antigravity.openLogin() }
         Button("添加 Antigravity 账号…") { antigravity.addAccount() }
             .disabled(antigravity.busy || !antigravity.signingIn.isEmpty || DemoData.enabled)
+        if !antigravity.signingIn.isEmpty {
+            Button("打开 Antigravity 登录窗口…") { antigravity.showSignInWindow() }
+        }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Divider()
         Button(L.quit) { NSApp.terminate(nil) }
