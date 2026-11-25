@@ -236,6 +236,8 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var accounts = AntigravityAccount.load()
     @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
     @Published private(set) var signingIn: Set<UUID> = []
+    @Published private(set) var loginProcess: Process?
+    private var loginCancelled = false
     private var polling: Task<Void, Never>?
 
     func start() {
@@ -286,7 +288,7 @@ final class AntigravityModel: ObservableObject {
     func addAccount() {
         let controller = PanelController.shared
         guard let name = controller.prompt(title: "添加 Antigravity 账号",
-                                           message: "给账号起个名字。接下来会打开终端，用 Google 登录这个独立账号。",
+                                           message: "给账号起个名字，然后在隔离的隐身窗口选择 Google 账号。授权成功后会自动回到悬浮窗。",
                                            defaultValue: "") else { return }
         guard name.count <= 80, !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
               !accounts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
@@ -302,25 +304,48 @@ final class AntigravityModel: ObservableObject {
     func login(_ account: AntigravityAccount) async {
         guard signingIn.isEmpty, !DemoData.enabled else { return }
         signingIn.insert(account.id)
-        defer { signingIn.remove(account.id) }
+        loginCancelled = false
+        defer {
+            signingIn.remove(account.id)
+            loginProcess = nil
+        }
         do {
             let command = try await Task.detached(priority: .utility) { try AntigravityCLI.verifyIsolation() }.value
-            let script = try account.prepareLogin(command: command)
-            guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
-                throw AntigravityCLI.Failure.failed
-            }
-            _ = try await NSWorkspace.shared.open([script], withApplicationAt: terminal, configuration: .init())
-            for _ in 0..<150 {
-                if FileManager.default.fileExists(atPath: account.loginFinished.path) {
-                    try? FileManager.default.removeItem(at: account.loginFinished)
-                    await refresh(account)
-                    return
+            guard !loginCancelled else { return }
+            let process = Process()
+            process.executableURL = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".local/bin/codex-monitor")
+            process.arguments = ["antigravity-login", account.id.uuidString, command.path]
+            let diagnostics = Pipe()
+            process.standardInput = FileHandle.nullDevice
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = diagnostics
+            loginProcess = process
+            let failure: String? = try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { completed in
+                    let data = diagnostics.fileHandleForReading.readDataToEndOfFile()
+                    let message = String(decoding: data.prefix(1024), as: UTF8.self)
+                    let line = message.split(separator: "\n").first ?? ""
+                    let safeError = line.hasPrefix("error: ") ? String(line.dropFirst(7)) : "无法完成浏览器登录，请重试。"
+                    continuation.resume(returning: completed.terminationStatus == 0 ? nil : safeError)
                 }
-                try await Task.sleep(nanoseconds: 2_000_000_000)
+                do { try process.run() }
+                catch { continuation.resume(throwing: error) }
+            }
+            guard !loginCancelled else { return }
+            if let failure = failure {
+                saved[account.id] = AntigravityAccountStatus(error: failure)
+            } else {
+                await refresh(account)
             }
         } catch {
             saved[account.id] = AntigravityAccountStatus(error: (error as? AntigravityCLI.Failure ?? .failed).rawValue)
         }
+    }
+
+    func cancelLogin() {
+        loginCancelled = true
+        if let process = loginProcess, process.isRunning { process.terminate() }
     }
 
     func openLogin() {
@@ -394,7 +419,12 @@ struct AntigravityWidgetSection: View {
                     .disabled(model.busy || !model.signingIn.isEmpty)
             }
             if signingIn {
-                Text("请在终端完成 Google 登录。").font(.caption2).foregroundStyle(.secondary)
+                HStack {
+                    Text(model.loginProcess == nil ? "正在准备独立登录…" : "请在隐身窗口完成 Google 授权。")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("取消") { model.cancelLogin() }.buttonStyle(.link).font(.caption)
+                }
             } else if let error = status?.error {
                 Text(error).font(.caption2).foregroundStyle(.secondary)
             } else if let status = status, let sync = status.sync {
