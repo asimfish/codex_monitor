@@ -360,6 +360,20 @@ The subscription benefit follows its linked organization's subscription billing
 cycle; it does not increase signed-in Codex quotas. A public endpoint for the
 promotional grant balance is not established by the documentation used here.
 
+### Google Antigravity (macOS widget)
+
+Install the official [Antigravity app and CLI](https://antigravity.google/docs/install).
+The widget finds `agy` in `~/.local/bin`, `/opt/homebrew/bin` or `/usr/local/bin`
+and requires version 1.1.11 or newer. Expand **Antigravity** in the widget and
+click **登录 / 切换** to open the official app, then sign in with Google there.
+If you already signed in to `agy`, the widget can use that session immediately.
+
+The refresh button reads the [official model quota command](https://antigravity.google/docs/cli/commands/usage).
+The widget shows remaining percentages, reported reset times and the last
+successful sync for the active Antigravity login. It refreshes every five minutes
+while running. After switching accounts in the official app, click refresh to
+see the active account's quotas. Google manages the login in its own client.
+
 ### 3.3 Verification scope and downloads
 
 [Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `3f0cf4e` or newer code. The checks cover:

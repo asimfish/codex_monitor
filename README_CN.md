@@ -316,6 +316,17 @@ API 记录独立于 Codex 登录，不会切换当前账号。原生窗口复用
 赠送绑定 API 组织，按订阅账期到期，不增加 Codex 登录额度；当前使用的官方文档
 没有确立公开的赠送余额查询接口，因此不会把估算标成官方余额。
 
+### Google Antigravity（macOS 悬窗）
+
+先安装[官方 Antigravity 客户端和 CLI](https://antigravity.google/docs/install)。
+悬窗会在 `~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin` 查找
+`agy`，需要 1.1.11 或更新版本。在悬窗展开 **Antigravity**，点击
+**登录 / 切换**，在官方客户端完成 Google 登录。已经登录 `agy` 时可直接读取。
+
+悬窗通过[官方额度命令](https://antigravity.google/docs/cli/commands/usage)
+读取当前登录账号的模型额度，显示剩余百分比、重置时间和最近成功同步时间。
+运行中每五分钟自动刷新。在官方客户端切换账号后可点击悬窗的刷新按钮立即更新。
+
 ### 3.3 验证范围与下载
 
 [自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `3f0cf4e` 或更新代码、且显示成功的运行。检查范围如下：

@@ -326,6 +326,7 @@ struct WidgetView: View {
     @ObservedObject var monitor: QuotaMonitor
     @ObservedObject var controller: PanelController
     @ObservedObject private var apiCredits = ApiCreditModel.shared
+    @ObservedObject private var antigravity = AntigravityModel.shared
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
     @State private var showLog = false
     @State private var isReordering = false
@@ -360,6 +361,8 @@ struct WidgetView: View {
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 8) {
                     ApiCreditWidgetSection(model: apiCredits)
+                    Divider().padding(.vertical, 2)
+                    AntigravityWidgetSection(model: antigravity)
                     if !otherIds.isEmpty {
                         Divider().padding(.vertical, 2)
                         othersHeader
@@ -435,8 +438,9 @@ struct WidgetView: View {
             Button {
                 Task { await monitor.refreshAll() }
                 Task { await apiCredits.run("refresh") }
+                Task { await antigravity.refresh() }
             } label: {
-                if monitor.isRefreshing || apiCredits.busy {
+                if monitor.isRefreshing || apiCredits.busy || antigravity.busy {
                     ProgressView().controlSize(.small).frame(width: 16, height: 16)
                 } else {
                     Image(systemName: "arrow.clockwise")
@@ -571,6 +575,7 @@ struct WidgetView: View {
         Button(L.addAccountEllipsis) { addAccount() }
         Button(L.manageAccounts) { AccountManagerController.shared.open(monitor: monitor) }
         Button("API 额度管理…") { ApiCreditsController.shared.open() }
+        Button("Antigravity 登录 / 切换…") { antigravity.openLogin() }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Button(L.openUsagePage) {
             if let u = URL(string: "https://chatgpt.com/codex/settings/usage") { NSWorkspace.shared.open(u) }
@@ -1034,6 +1039,7 @@ struct MenuBarMenu: View {
         Button(L.refreshNow) {
             Task { await monitor.refreshAll() }
             Task { await apiCredits.run("refresh") }
+            Task { await AntigravityModel.shared.refresh() }
         }
         Picker(L.windowLevel, selection: $controller.mode) {
             ForEach(WindowMode.allCases) { mode in
@@ -1053,6 +1059,7 @@ struct MenuBarMenu: View {
         ))
         Button(L.addAccountEllipsis) { LoginWindowController.shared.begin(monitor: monitor, panel: controller) }
         Button("API 额度管理…") { ApiCreditsController.shared.open() }
+        Button("Antigravity 登录 / 切换…") { AntigravityModel.shared.openLogin() }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Divider()
         Button(L.quit) { NSApp.terminate(nil) }
