@@ -47,7 +47,7 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
             applyMode()
         }
     }
-    /// Collapsed = a single compact strip showing the active Codex and Gemini quotas.
+    /// Collapsed = a compact strip showing the active Codex and selected Gemini quotas.
     @Published var isCollapsed: Bool {
         didSet { UserDefaults.standard.set(isCollapsed, forKey: "panelCollapsed") }
     }

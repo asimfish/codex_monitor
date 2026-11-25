@@ -280,6 +280,7 @@ enum AntigravityCLI {
 @MainActor
 final class AntigravityModel: ObservableObject {
     static let shared = AntigravityModel()
+    private static let stripAccountKey = "antigravityStripAccountID"
     @Published private(set) var groups: [AntigravityQuota.Group] = []
     @Published private(set) var lastSync: Date?
     @Published private(set) var error: String?
@@ -288,6 +289,8 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var accounts = AntigravityAccount.load()
     @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
+    @Published private var stripAccountID = UserDefaults.standard.string(forKey: AntigravityModel.stripAccountKey)
+        .flatMap(UUID.init(uuidString:))
     @Published private(set) var signingIn: Set<UUID> = []
     private var loginProcess: Process?
     @Published private(set) var loginURL: URL?
@@ -298,6 +301,29 @@ final class AntigravityModel: ObservableObject {
     private var clipboardVersion = 0
     private var loginCancelled = false
     private var polling: Task<Void, Never>?
+
+    var stripAccount: AntigravityAccount? {
+        accounts.first { $0.id == stripAccountID }
+    }
+
+    var stripStatus: AntigravityAccountStatus? {
+        if let account = stripAccount { return saved[account.id] }
+        return AntigravityAccountStatus(groups: groups, sync: lastSync, error: error, eligibility: systemEligibility)
+    }
+
+    func setStripAccount(_ account: AntigravityAccount?) {
+        if let account {
+            guard accounts.contains(where: { $0.id == account.id }), account.hasToken else { return }
+        }
+        guard stripAccountID != account?.id else { return }
+        stripAccountID = account?.id
+        UserDefaults.standard.set(account?.id.uuidString, forKey: Self.stripAccountKey)
+        if let account {
+            Task { await refreshSavedAccount(account) }
+        } else {
+            Task { await refresh() }
+        }
+    }
 
     func start() {
         guard polling == nil else { return }
@@ -548,7 +574,8 @@ struct AntigravityWidgetSection: View {
                         .font(.caption.weight(.semibold))
                 }.buttonStyle(.plain)
                 Spacer()
-                Button("登录 / 切换") { model.openLogin() }.buttonStyle(.link).font(.caption)
+                Button("打开官方客户端") { model.openLogin() }.buttonStyle(.link).font(.caption)
+                    .help("在官方 Antigravity 的账号设置中切换系统登录")
                 Button { Task { await model.refresh() } } label: {
                     if model.busy { ProgressView().controlSize(.mini) }
                     else { Image(systemName: "arrow.clockwise") }
@@ -565,6 +592,15 @@ struct AntigravityWidgetSection: View {
                         .buttonStyle(.link).font(.caption)
                         .disabled(model.busy || !model.signingIn.isEmpty || DemoData.enabled)
                 }.padding(.horizontal, 4)
+                HStack(spacing: 6) {
+                    if let account = model.stripAccount {
+                        Text("收起栏显示：\(account.name)").lineLimit(1)
+                        Spacer(minLength: 4)
+                        Button("跟随系统登录") { model.setStripAccount(nil) }.buttonStyle(.link)
+                    } else {
+                        Text("收起栏跟随系统登录")
+                    }
+                }.font(.caption2).foregroundStyle(.secondary).padding(.horizontal, 4)
                 if let eligibility = model.systemEligibility {
                     AntigravityVerificationNotice(eligibility: eligibility)
                 } else if let error = model.error {
@@ -592,6 +628,13 @@ struct AntigravityWidgetSection: View {
             HStack {
                 Text(account.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer()
+                if account.id == model.stripAccount?.id {
+                    Label("收起栏", systemImage: "checkmark").font(.caption2).foregroundStyle(.secondary)
+                } else if account.hasToken && !signingIn {
+                    Button("显示在收起栏") { model.setStripAccount(account) }
+                        .buttonStyle(.link).font(.caption)
+                        .help("用此账号的 Gemini 额度更新收起栏")
+                }
                 if account.hasToken && !signingIn {
                     Button { Task { await model.refreshSavedAccount(account) } } label: {
                         Image(systemName: "arrow.clockwise")
