@@ -365,8 +365,9 @@ promotional grant balance is not established by the documentation used here.
 Install the official [Antigravity app and CLI](https://antigravity.google/docs/install).
 The widget finds `agy` in `~/.local/bin`, `/opt/homebrew/bin` or `/usr/local/bin`
 and requires version 1.1.11 or newer. Expand **Antigravity** in the widget and
-click **打开官方客户端** (Open official client) to sign in or switch the system
-account in Antigravity's account settings.
+click **打开官方客户端** (Open official client). To change the system account,
+press `Cmd+,` in Antigravity and select **Account → Sign Out**, then sign in
+with the other Google account.
 If you already signed in to `agy`, the widget can use that session immediately.
 
 The refresh button reads the [official model quota command](https://antigravity.google/docs/cli/commands/usage).
@@ -386,9 +387,9 @@ The profile stays on the list if sign-in is
 cancelled. Choose **登录** on that row to retry. The widget updates each
 signed-in profile independently alongside the system login. On a signed-in
 profile, **显示在收起栏** (Show in collapsed strip) selects its Gemini quota for
-the collapsed widget. **跟随系统登录** (Follow system login) restores the default
-source. Use the official app's account settings to change the system login itself.
-The system row shows the email reported by the official CLI. If Google
+the collapsed widget. Click the same button on the system row to restore the
+default source. The system row shows the email reported by the official CLI.
+When identity is temporarily unavailable, it labels the last observed email. If Google
 authorized an account and Antigravity requests further verification, use the
 verification entry on that account's card, then refresh it.
 
