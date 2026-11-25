@@ -3,12 +3,13 @@ import SwiftUI
 
 enum AntigravitySignInResult {
     case authorized
+    case verification(AntigravityCLI.Eligibility)
     case cancelled
     case failed(String)
 
     var canRetry: Bool {
         switch self {
-        case .authorized: return false
+        case .authorized, .verification: return false
         case .cancelled, .failed: return true
         }
     }
@@ -60,8 +61,10 @@ private struct AntigravitySignInView: View {
             if let result = model.loginResult {
                 switch result {
                 case .authorized:
-                    Label("登录成功，额度会自动更新。", systemImage: "checkmark.circle.fill")
+                    Label("登录已保存，面板会继续同步额度。", systemImage: "checkmark.circle.fill")
                         .foregroundStyle(.green)
+                case .verification(let eligibility):
+                    AntigravityVerificationNotice(eligibility: eligibility)
                 case .cancelled:
                     Text("登录已取消，可以重新开始。")
                 case .failed(let reason):
@@ -116,5 +119,19 @@ private struct AntigravitySignInView: View {
         .padding(20)
         .onChange(of: model.loginResult != nil) { _, finished in if finished { code = "" } }
         .onDisappear { code = "" }
+    }
+}
+
+struct AntigravityVerificationNotice: View {
+    let eligibility: AntigravityCLI.Eligibility
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(AntigravityCLI.Eligibility.message).foregroundStyle(.secondary)
+            if let url = eligibility.url {
+                Button("去 Google 验证") { NSWorkspace.shared.open(url) }.buttonStyle(.link)
+                Text("用此账号完成验证后，回到悬浮窗刷新。").foregroundStyle(.secondary)
+            }
+        }.font(.caption)
     }
 }

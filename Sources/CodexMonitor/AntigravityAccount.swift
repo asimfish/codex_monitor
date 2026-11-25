@@ -35,4 +35,5 @@ struct AntigravityAccountStatus {
     var groups: [AntigravityQuota.Group] = []
     var sync: Date?
     var error: String?
+    var eligibility: AntigravityCLI.Eligibility?
 }

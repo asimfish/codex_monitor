@@ -56,6 +56,11 @@ struct AntigravityQuota: Decodable {
 }
 
 enum AntigravityCLI {
+    struct Eligibility: Error {
+        static let message = "Google 已登录，需完成 Antigravity 账号验证后才能读取额度。"
+        let url: URL?
+    }
+
     private struct Binary: Equatable {
         let path: URL
         let version: String
@@ -171,7 +176,11 @@ enum AntigravityCLI {
         let arguments = profileArguments + ["-p", "/usage", "--output-format", "json", "--print-timeout", "15s"]
         let result = try run(command, arguments, in: directory, isolated: profile != nil)
         if result.status != 0 {
-            let message = String(decoding: result.output + result.diagnostics, as: UTF8.self).lowercased()
+            let output = String(decoding: result.output + result.diagnostics, as: UTF8.self)
+            struct Reply: Decodable { let error: String }
+            let detail = (try? JSONDecoder().decode(Reply.self, from: result.output))?.error
+            if let eligibility = eligibilityFailure(detail ?? output) { throw eligibility }
+            let message = output.lowercased()
             if message.contains("authentication required") || message.contains("not authenticated") {
                 throw Failure.login
             }
@@ -180,6 +189,37 @@ enum AntigravityCLI {
         guard let quota = AntigravityQuota.decode(result.output), !quota.groups.isEmpty,
               quota.groups.contains(where: { !$0.buckets.isEmpty }) else { throw Failure.unavailable }
         return quota
+    }
+
+    static func eligibilityFailure(_ message: String) -> Eligibility? {
+        guard message.localizedCaseInsensitiveContains("eligibility check failed") else { return nil }
+        let url = message.split(whereSeparator: \.isWhitespace).lazy.compactMap { token -> URL? in
+            guard let parts = URLComponents(string: String(token)),
+                  parts.scheme == "https", parts.host == "accounts.google.com",
+                  parts.path == "/v3/signin/continue", parts.user == nil,
+                  parts.password == nil, parts.port == nil, parts.fragment == nil,
+                  parts.queryItems?.filter({ $0.name == "continue" }).map(\.value) ==
+                    ["https://developers.google.com/gemini-code-assist/auth/auth_success_gemini"] else { return nil }
+            return parts.url
+        }.first
+        return Eligibility(url: url)
+    }
+
+    static func readSystemEmail() -> String? {
+        struct Identity: Decodable { let email: String? }
+        guard let command = try? executable() else { return nil }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("codex-monitor-agy-" + UUID().uuidString)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                                    attributes: [.posixPermissions: 0o700])
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let helper = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".local/bin/codex-monitor")
+            let result = try run(helper, ["antigravity-identity", command.path], in: directory)
+            guard result.status == 0 else { return nil }
+            return try JSONDecoder().decode(Identity.self, from: result.output).email
+        } catch {
+            return nil
+        }
     }
 
     private static func run(_ executable: URL, _ arguments: [String], in directory: URL, isolated: Bool = false)
@@ -203,6 +243,7 @@ enum AntigravityCLI {
                                                "LANG", "LC_ALL", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
                                                "https_proxy", "http_proxy", "no_proxy"]
         var environment = ProcessInfo.processInfo.environment.filter { allowedEnvironment.contains($0.key) }
+        environment["AGY_CLI_DISABLE_AUTO_UPDATE"] = "true"
         if isolated { environment["AGY_CLI_FORCE_FILE_TOKEN_STORAGE"] = "1" }
         process.environment = environment
         try process.run()
@@ -232,6 +273,8 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var groups: [AntigravityQuota.Group] = []
     @Published private(set) var lastSync: Date?
     @Published private(set) var error: String?
+    @Published private(set) var systemEmail: String?
+    @Published private(set) var systemEligibility: AntigravityCLI.Eligibility?
     @Published private(set) var busy = false
     @Published private(set) var accounts = AntigravityAccount.load()
     @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
@@ -260,17 +303,21 @@ final class AntigravityModel: ObservableObject {
         guard !busy, !DemoData.enabled else { return }
         busy = true
         defer { busy = false }
+        let identity = Task.detached(priority: .utility) { AntigravityCLI.readSystemEmail() }
         do {
             let quota = try await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.value
             groups = quota.groups.filter { !$0.buckets.isEmpty }
             lastSync = Date()
             error = nil
+            systemEligibility = nil
         } catch {
             // The official command follows the active login. Avoid showing a prior account after a failed read.
             groups = []
             lastSync = nil
-            self.error = (error as? AntigravityCLI.Failure ?? .failed).rawValue
+            systemEligibility = error as? AntigravityCLI.Eligibility
+            self.error = systemEligibility == nil ? (error as? AntigravityCLI.Failure ?? .failed).rawValue : nil
         }
+        systemEmail = await identity.value
         for account in accounts where !signingIn.contains(account.id) {
             await refresh(account)
         }
@@ -287,8 +334,19 @@ final class AntigravityModel: ObservableObject {
             }.value
             saved[account.id] = AntigravityAccountStatus(groups: quota.groups.filter { !$0.buckets.isEmpty }, sync: Date())
         } catch {
-            saved[account.id] = AntigravityAccountStatus(error: (error as? AntigravityCLI.Failure ?? .failed).rawValue)
+            if let eligibility = error as? AntigravityCLI.Eligibility {
+                saved[account.id] = AntigravityAccountStatus(eligibility: eligibility)
+            } else {
+                saved[account.id] = AntigravityAccountStatus(error: (error as? AntigravityCLI.Failure ?? .failed).rawValue)
+            }
         }
+    }
+
+    func refreshSavedAccount(_ account: AntigravityAccount) async {
+        guard !busy, !signingIn.contains(account.id), !DemoData.enabled else { return }
+        busy = true
+        defer { busy = false }
+        await refresh(account)
     }
 
     func addAccount() {
@@ -366,8 +424,12 @@ final class AntigravityModel: ObservableObject {
                 saved[account.id] = AntigravityAccountStatus(error: failure)
                 loginResult = .failed(failure)
             } else {
-                loginResult = .authorized
                 await refresh(account)
+                if let eligibility = saved[account.id]?.eligibility {
+                    loginResult = .verification(eligibility)
+                } else {
+                    loginResult = .authorized
+                }
             }
         } catch {
             let reason = (error as? AntigravityCLI.Failure ?? .failed).rawValue
@@ -478,13 +540,18 @@ struct AntigravityWidgetSection: View {
             }.padding(.horizontal, 4)
             if expanded {
                 HStack {
-                    Text("当前系统登录").font(.caption2).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(model.systemEmail ?? "系统账号").font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        Text("当前系统登录").font(.caption2).foregroundStyle(.secondary)
+                    }
                     Spacer()
                     Button("添加账号") { model.addAccount() }
                         .buttonStyle(.link).font(.caption)
                         .disabled(model.busy || !model.signingIn.isEmpty || DemoData.enabled)
                 }.padding(.horizontal, 4)
-                if let error = model.error {
+                if let eligibility = model.systemEligibility {
+                    AntigravityVerificationNotice(eligibility: eligibility)
+                } else if let error = model.error {
                     Text(error).font(.caption2).foregroundStyle(.secondary)
                 } else if model.groups.isEmpty {
                     Text(model.busy ? "正在读取额度…" : "登录 Antigravity 后可查看额度。")
@@ -509,6 +576,11 @@ struct AntigravityWidgetSection: View {
             HStack {
                 Text(account.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer()
+                if account.hasToken && !signingIn {
+                    Button { Task { await model.refreshSavedAccount(account) } } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }.buttonStyle(.plain).help("刷新此账号额度").disabled(model.busy)
+                }
                 Button(signingIn ? "打开登录窗口" : (account.hasToken ? "重新登录" : "登录")) {
                     if signingIn { model.showSignInWindow() }
                     else { Task { await model.login(account) } }
@@ -518,6 +590,8 @@ struct AntigravityWidgetSection: View {
             if signingIn {
                 Text(model.submittingCode ? "正在核验授权…" : "请在 Antigravity 登录窗口提交授权码。")
                     .font(.caption2).foregroundStyle(.secondary)
+            } else if let eligibility = status?.eligibility {
+                AntigravityVerificationNotice(eligibility: eligibility)
             } else if let error = status?.error {
                 Text(error).font(.caption2).foregroundStyle(.secondary)
             } else if let status = status, let sync = status.sync {

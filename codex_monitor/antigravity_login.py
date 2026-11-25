@@ -8,6 +8,7 @@ from pathlib import Path
 import pty
 import re
 import select
+import shlex
 import signal
 import subprocess
 import sys
@@ -54,18 +55,10 @@ def _valid_code(code):
 
 
 @contextlib.contextmanager
-def _agy_login(executable, profile, work):
-    # The CLI's terminal auth flow provides Google's PKCE URL and accepts the
-    # matching authorization code. The widget opens the URL in the user’s browser.
-    opener = work / "open"
-    opener.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    opener.chmod(0o700)
-    env = dict(_environment(), PATH=f"{work}:/usr/bin:/bin:/usr/sbin:/sbin", TERM="xterm-256color",
-               BROWSER=str(opener), AGY_CLI_FORCE_FILE_TOKEN_STORAGE="1")
+def _terminal(args, work, env):
     master, slave = pty.openpty()
     try:
-        child = subprocess.Popen([executable, "acp", "--login", "--gemini-dir", str(profile),
-                                  "--app-data-dir", "antigravity-cli"], cwd=work, env=env,
+        child = subprocess.Popen(args, cwd=work, env=env,
                                  stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
         os.close(slave)
         slave = None
@@ -83,6 +76,14 @@ def _agy_login(executable, profile, work):
                 with contextlib.suppress(ProcessLookupError):
                     os.killpg(child.pid, signal.SIGKILL)
                 child.wait()
+
+
+def _terminal_environment(work):
+    opener = work / "open"
+    opener.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    opener.chmod(0o700)
+    return dict(_environment(), PATH=f"{work}:/usr/bin:/bin:/usr/sbin:/sbin", TERM="xterm-256color",
+                BROWSER=str(opener), AGY_CLI_DISABLE_AUTO_UPDATE="true")
 
 
 def _read_terminal(fd, timeout):
@@ -141,7 +142,9 @@ def _read_code(child):
 
 
 def _login(executable, profile, work):
-    with _agy_login(executable, profile, work) as (child, master):
+    env = dict(_terminal_environment(work), AGY_CLI_FORCE_FILE_TOKEN_STORAGE="1")
+    args = [executable, "acp", "--login", "--gemini-dir", str(profile), "--app-data-dir", "antigravity-cli"]
+    with _terminal(args, work, env) as (child, master):
         url, _ = _login_url(child, master)
         if url:
             # Local pipe to the native widget. Do not log the URL or the code.
@@ -158,18 +161,54 @@ def _login(executable, profile, work):
         raise LoginError("没有找到此账号的登录结果，请重试。")
 
 
+def _check_executable(executable):
+    allowed = [Path.home() / ".local/bin/agy", Path("/opt/homebrew/bin/agy"), Path("/usr/local/bin/agy")]
+    if Path(executable) not in allowed or not os.access(executable, os.X_OK):
+        raise LoginError("找不到已验证的官方 agy。")
+
+
+def read_system_email(executable):
+    _check_executable(executable)
+    with tempfile.TemporaryDirectory(prefix="codex-monitor-agy-identity-") as tmp:
+        work = Path(tmp)
+        hook = work / "status.py"
+        capture = work / "identity"
+        # Request only the documented email field. The hook's input can also
+        # contain workspace and conversation metadata, which is discarded.
+        hook.write_text(
+            "import json, os, sys\n"
+            "state = json.load(sys.stdin)\n"
+            "email = state.get('email')\n"
+            "if state.get('product') == 'antigravity' and isinstance(email, str):\n"
+            "    path = " + repr(str(capture)) + "\n"
+            "    part = path + '.' + str(os.getpid())\n"
+            "    with open(part, 'w') as out:\n"
+            "        json.dump({'email': email}, out)\n"
+            "    os.replace(part, path)\n", encoding="utf-8")
+        command = shlex.join([sys.executable, str(hook)])
+        settings = json.dumps({"statusLine": {"type": "command", "command": command, "enabled": True}})
+        with _terminal([executable, "--settings", settings], work, _terminal_environment(work)) as (child, master):
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                # Startup can briefly show a sign-in prompt while loading the
+                # system keychain. Wait for the authoritative status payload.
+                _read_terminal(master, .25)
+                if capture.is_file():
+                    email = json.loads(capture.read_text(encoding="utf-8")).get("email")
+                    if isinstance(email, str) and re.fullmatch(r"[^\s@]{1,100}@[^\s@]{1,150}", email):
+                        return email
+                if child.poll() is not None:
+                    break
+    return None
+
+
 def run(profile_id, executable):
-    # This entry point is only called by the local macOS application.
-    if sys.platform != "darwin":
-        raise LoginError("Antigravity 浏览器登录目前支持 macOS。")
     root = Path.home() / "Library/Application Support/CodexMonitor/Antigravity"
     try:
         profile = root / str(uuid.UUID(profile_id)).upper()
     except ValueError:
         raise LoginError("Antigravity 账号 ID 无效。") from None
-    allowed = [Path.home() / ".local/bin/agy", Path("/opt/homebrew/bin/agy"), Path("/usr/local/bin/agy")]
-    if Path(executable) not in allowed or not os.access(executable, os.X_OK):
-        raise LoginError("找不到已验证的官方 agy。")
+    _check_executable(executable)
     if root.is_symlink() or profile.is_symlink():
         raise LoginError("Antigravity 账号目录不能是符号链接。")
     profile.mkdir(mode=0o700, parents=True, exist_ok=True)

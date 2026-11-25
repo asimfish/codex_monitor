@@ -384,6 +384,9 @@ the same attempt if Google declines the private window.
 The profile stays on the list if sign-in is
 cancelled. Choose **登录** on that row to retry. The widget updates each
 signed-in profile independently alongside the system login.
+The system row shows the email reported by the official CLI. If Google
+authorized an account and Antigravity requests further verification, use the
+verification entry on that account's card, then refresh it.
 
 Additional profiles need `agy` 1.5.16 or later and a successful check of the
 CLI's local file storage isolation. The official CLI keeps each profile's
