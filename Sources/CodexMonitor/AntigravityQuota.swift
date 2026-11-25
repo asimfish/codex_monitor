@@ -33,6 +33,16 @@ struct AntigravityQuota: Decodable {
 
     let groups: [Group]
 
+    static func tightestGeminiBucket(in groups: [Group]) -> Bucket? {
+        groups.filter { $0.name.localizedCaseInsensitiveContains("Gemini") }
+            .flatMap(\.buckets)
+            .compactMap { bucket -> (Bucket, Double)? in
+                guard bucket.disabled != true, let fraction = bucket.fraction else { return nil }
+                return (bucket, fraction)
+            }
+            .min { $0.1 < $1.1 }?.0
+    }
+
     private struct Reply: Decodable {
         struct Command: Decodable {
             let name: String
@@ -290,7 +300,13 @@ final class AntigravityModel: ObservableObject {
     private var polling: Task<Void, Never>?
 
     func start() {
-        guard polling == nil, !DemoData.enabled else { return }
+        guard polling == nil else { return }
+        if DemoData.enabled {
+            groups = DemoData.antigravityGroups()
+            systemEmail = "gemini@example.com"
+            lastSync = Date()
+            return
+        }
         polling = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.refresh()

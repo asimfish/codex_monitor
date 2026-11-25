@@ -47,7 +47,7 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
             applyMode()
         }
     }
-    /// Collapsed = a single compact strip showing only the active account.
+    /// Collapsed = a single compact strip showing the active Codex and Gemini quotas.
     @Published var isCollapsed: Bool {
         didSet { UserDefaults.standard.set(isCollapsed, forKey: "panelCollapsed") }
     }
@@ -73,7 +73,7 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
         }
         let hosting = NSHostingView(rootView: root)
         let p = FloatingPanel(
-            contentRect: NSRect(x: 0, y: 0, width: Self.panelWidth, height: 240),
+            contentRect: NSRect(x: 0, y: 0, width: currentWidth, height: 240),
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -88,9 +88,9 @@ final class PanelController: NSObject, ObservableObject, NSWindowDelegate {
         p.hasShadow = true
         p.isMovableByWindowBackground = true
         p.animationBehavior = .utilityWindow
-        p.contentView = hosting
         p.delegate = self
         panel = p
+        p.contentView = hosting
         applyMode()
         restoreOrigin()
         updateMaximumHeight()

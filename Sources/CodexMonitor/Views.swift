@@ -78,51 +78,37 @@ struct PlanBadge: View {
     }
 }
 
-// MARK: - Collapsed vertical strip (active account only)
+// MARK: - Collapsed vertical strip
 
 struct CollapsedStripView: View {
     @ObservedObject var monitor: QuotaMonitor
     @ObservedObject var controller: PanelController
+    @ObservedObject private var antigravity = AntigravityModel.shared
 
     var body: some View {
         let _ = monitor.clockTick
         let entry = monitor.activeEntry
         let window = entry?.tightestWindow
+        let gemini = AntigravityQuota.tightestGeminiBucket(in: antigravity.groups)
+        let geminiRemaining = gemini?.fraction.map { $0 * 100 }
         // Everything except the bottom chevron is plain content, so clicking/dragging the strip
         // only moves the window; expanding takes a deliberate click on the arrow.
         VStack(spacing: 6) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
-            Circle().fill(entry?.statusColor ?? .gray).frame(width: 8, height: 8)
-            VerticalQuotaBar(
-                fraction: (window?.remainingPercent ?? 0) / 100,
-                color: quotaColor(remaining: window?.remainingPercent ?? 100),
-                indeterminate: window == nil
-            )
-            .frame(width: 8, height: 64)
-            if let w = window {
-                Text(Fmt.percent(w.remainingPercent))
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                if let d = w.resetDate {
-                    Text(Fmt.shortCountdown(to: d))
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-            } else if entry?.error != nil {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.orange)
-            } else if entry == nil {
-                Text(L.dash).font(.system(size: 10, weight: .bold))
-            } else {
-                ProgressView().controlSize(.mini)
-            }
+            CompactQuotaMeter(
+                title: "Codex", remaining: window?.remainingPercent, reset: window?.resetDate,
+                status: entry?.statusColor ?? .gray, hasIssue: entry?.error != nil,
+                isLoading: entry != nil && entry?.error == nil && window == nil
+            ).help(window.map { "Codex · \($0.label)" } ?? "Codex")
+            Divider()
+            CompactQuotaMeter(
+                title: "Gemini", remaining: geminiRemaining, reset: gemini?.resetDate,
+                status: geminiRemaining.map { quotaColor(remaining: $0) } ?? .gray,
+                hasIssue: antigravity.error != nil || antigravity.systemEligibility != nil,
+                isLoading: antigravity.busy && antigravity.lastSync == nil
+            ).help(gemini.map { "Gemini · \($0.title)" } ?? "Gemini")
             Button {
                 controller.isCollapsed = false
             } label: {
@@ -144,6 +130,45 @@ struct CollapsedStripView: View {
                 .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
         )
         .padding(2)
+    }
+}
+
+private struct CompactQuotaMeter: View {
+    let title: String
+    let remaining: Double?
+    let reset: Date?
+    let status: Color
+    let hasIssue: Bool
+    let isLoading: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(title).font(.system(size: 9, weight: .semibold))
+                .lineLimit(1).minimumScaleFactor(0.8)
+            Circle().fill(status).frame(width: 6, height: 6)
+            VerticalQuotaBar(fraction: (remaining ?? 0) / 100,
+                             color: quotaColor(remaining: remaining ?? 100),
+                             indeterminate: remaining == nil)
+                .frame(width: 8, height: 44)
+            if let remaining = remaining {
+                Text(Fmt.percent(remaining))
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                if let reset = reset {
+                    Text(Fmt.shortCountdown(to: reset))
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+            } else if hasIssue {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10)).foregroundStyle(.orange)
+            } else if isLoading {
+                ProgressView().controlSize(.mini)
+            } else {
+                Text(L.dash).font(.system(size: 10, weight: .bold))
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
