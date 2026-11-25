@@ -289,6 +289,7 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var busy = false
     @Published private(set) var accounts = AntigravityAccount.load()
     @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
+    @Published private var accountOrder = AccountOrder(keyPrefix: "antigravityAccount")
     @Published private var stripAccountID = UserDefaults.standard.string(forKey: AntigravityModel.stripAccountKey)
         .flatMap(UUID.init(uuidString:))
     @Published private(set) var signingIn: Set<UUID> = []
@@ -301,6 +302,33 @@ final class AntigravityModel: ObservableObject {
     private var clipboardVersion = 0
     private var loginCancelled = false
     private var polling: Task<Void, Never>?
+
+    var canChangeCredentials: Bool { !busy && signingIn.isEmpty && !DemoData.enabled }
+    var usesAutomaticAccountOrder: Bool { accountOrder.automatic }
+
+    private var accountPriorities: [String: Int] {
+        Dictionary(accounts.map { account in
+            let status = saved[account.id]
+            let remaining = AntigravityQuota.tightestGeminiBucket(in: status?.groups ?? [])?.fraction
+            let priority = account.annotation?.unavailable == true ? 4 : AccountOrder.priority(
+                remaining: remaining, expired: !account.hasToken,
+                hasError: status?.error != nil || status?.eligibility != nil, limited: false)
+            return (account.id.uuidString, priority)
+        }, uniquingKeysWith: { first, _ in first })
+    }
+
+    var orderedAccounts: [AntigravityAccount] {
+        let byID = Dictionary(accounts.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { first, _ in first })
+        let ordered = accountOrder.sorted(accounts.map { $0.id.uuidString }, priorities: accountPriorities).compactMap { byID[$0] }
+        return ordered.filter { $0.annotation?.unavailable != true } + ordered.filter { $0.annotation?.unavailable == true }
+    }
+
+    func moveAccount(_ account: AntigravityAccount, direction: AccountOrder.Move) {
+        accountOrder.move(account.id.uuidString, direction: direction, available: accounts.map { $0.id.uuidString },
+                          pinned: [], priorities: accountPriorities)
+    }
+
+    func restoreAutomaticAccountOrder() { accountOrder.useAutomaticOrder() }
 
     var stripAccount: AntigravityAccount? {
         accounts.first { $0.id == stripAccountID }
@@ -391,13 +419,17 @@ final class AntigravityModel: ObservableObject {
         await refresh(account)
     }
 
+    private func validName(_ name: String, excluding id: UUID? = nil) -> Bool {
+        (1...80).contains(name.count) && !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+            && !accounts.contains { $0.id != id && $0.name.caseInsensitiveCompare(name) == .orderedSame }
+    }
+
     func addAccount() {
         let controller = PanelController.shared
         guard let name = controller.prompt(title: "添加 Antigravity 账号",
                                            message: "给账号起个名字。完成 Google 授权后，在 Antigravity 登录窗口提交授权码。",
                                            defaultValue: "") else { return }
-        guard name.count <= 80, !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
-              !accounts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+        guard validName(name) else {
             controller.info(title: "请输入不同的账号名", message: "名称不能重复，最多 80 个字符。")
             return
         }
@@ -407,8 +439,48 @@ final class AntigravityModel: ObservableObject {
         Task { await login(account) }
     }
 
+    func renameAccount(_ account: AntigravityAccount, to name: String) {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+        guard validName(name, excluding: account.id) else {
+            PanelController.shared.info(title: "请输入不同的账号名", message: "名称不能重复，最多 80 个字符。")
+            return
+        }
+        accounts[index] = AntigravityAccount(id: account.id, name: name, annotation: accounts[index].annotation)
+        AntigravityAccount.save(accounts)
+    }
+
+    func saveAnnotations(_ account: AntigravityAccount, tags: [String], unavailable: Bool) throws {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { throw AnnotationError.accountChanged }
+        accounts[index].annotation = try AccountAnnotations.validated(tags: tags, unavailable: unavailable)
+        AntigravityAccount.save(accounts)
+    }
+
+    func credentialAccount(_ id: UUID) throws -> AntigravityAccount {
+        guard !signingIn.contains(id), !DemoData.enabled else { throw AntigravityAccountActionError.busy }
+        guard let account = accounts.first(where: { $0.id == id }) else { throw AnnotationError.accountChanged }
+        return account
+    }
+
+    func signOut(_ id: UUID) throws {
+        guard canChangeCredentials else { throw AntigravityAccountActionError.busy }
+        let account = try credentialAccount(id)
+        try account.signOut()
+        saved[id] = nil
+    }
+
+    func removeAccount(_ id: UUID) throws -> URL? {
+        guard canChangeCredentials else { throw AntigravityAccountActionError.busy }
+        let account = try credentialAccount(id)
+        let backup = try account.archive()
+        accounts.removeAll { $0.id == id }
+        saved[id] = nil
+        if stripAccountID == id { setStripAccount(nil) }
+        AntigravityAccount.save(accounts)
+        return backup
+    }
+
     func login(_ account: AntigravityAccount) async {
-        guard signingIn.isEmpty, !DemoData.enabled else { return }
+        guard signingIn.isEmpty, !DemoData.enabled, accounts.contains(where: { $0.id == account.id }) else { return }
         signingIn.insert(account.id)
         loginCancelled = false
         loginResult = nil
@@ -586,6 +658,7 @@ struct AntigravityWidgetSection: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(model.systemEmail ?? "系统账号").font(.system(size: 12, weight: .semibold)).lineLimit(1)
                         Text("当前系统登录").font(.caption2).foregroundStyle(.secondary)
+                            .help("在官方客户端管理系统登录。独立账号的凭证可在对应的账号菜单里复制或导出。")
                     }
                     Spacer()
                     Button("添加账号") { model.addAccount() }
@@ -614,7 +687,7 @@ struct AntigravityWidgetSection: View {
                     Text("同步 \(Fmt.dateTime.string(from: lastSync))")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                ForEach(model.accounts) { account in
+                ForEach(model.orderedAccounts) { account in
                     savedAccount(account)
                 }
             }
@@ -624,27 +697,32 @@ struct AntigravityWidgetSection: View {
     private func savedAccount(_ account: AntigravityAccount) -> some View {
         let status = model.saved[account.id]
         let signingIn = model.signingIn.contains(account.id)
+        let hasToken = account.hasToken
         return VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(account.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Spacer()
                 if account.id == model.stripAccount?.id {
                     Label("收起栏", systemImage: "checkmark").font(.caption2).foregroundStyle(.secondary)
-                } else if account.hasToken && !signingIn {
+                } else if hasToken && !signingIn {
                     Button("显示在收起栏") { model.setStripAccount(account) }
                         .buttonStyle(.link).font(.caption)
                         .help("用此账号的 Gemini 额度更新收起栏")
                 }
-                if account.hasToken && !signingIn {
+                if hasToken && !signingIn {
                     Button { Task { await model.refreshSavedAccount(account) } } label: {
                         Image(systemName: "arrow.clockwise")
                     }.buttonStyle(.plain).help("刷新此账号额度").disabled(model.busy)
                 }
-                Button(signingIn ? "打开登录窗口" : (account.hasToken ? "重新登录" : "登录")) {
+                Button(signingIn ? "打开登录窗口" : (hasToken ? "重新登录" : "登录")) {
                     if signingIn { model.showSignInWindow() }
                     else { Task { await model.login(account) } }
                 }.buttonStyle(.link).font(.caption)
                     .disabled(!signingIn && (model.busy || !model.signingIn.isEmpty))
+                AntigravityAccountMenu(account: account, hasToken: hasToken, model: model)
+            }
+            EditableAccountTags(annotation: account.annotation ?? AccountAnnotation()) {
+                AntigravityAccountMenu.editTags(account, model: model)
             }
             if signingIn {
                 Text(model.submittingCode ? "正在核验授权…" : "请在 Antigravity 登录窗口提交授权码。")
@@ -657,7 +735,7 @@ struct AntigravityWidgetSection: View {
                 quotaGroups(status.groups)
                 Text("同步 \(Fmt.dateTime.string(from: sync))").font(.caption2).foregroundStyle(.secondary)
             } else {
-                Text(account.hasToken ? "等待同步" : "尚未登录").font(.caption2).foregroundStyle(.secondary)
+                Text(hasToken ? "等待同步" : "尚未登录").font(.caption2).foregroundStyle(.secondary)
             }
         }.padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)

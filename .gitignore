@@ -7,6 +7,8 @@ __pycache__/
 dist/
 auth.json
 auth-*.json
+antigravity-oauth-token
+.antigravity-export-*
 dashboard.token
 credentials.json
 secrets.json

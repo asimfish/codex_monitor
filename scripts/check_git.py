@@ -42,7 +42,8 @@ def sensitive_path(name):
     internal = {".codex", ".codex-accounts", "_auth_locks", "_reset_requests", "_api_accounts", "sessions", "__pycache__"}
     leaf = path.name
     return bool(internal.intersection(path.parts)
-                or leaf in {"auth.json", "dashboard.token", "credentials.json", "secrets.json", ".env"}
+                or leaf in {"auth.json", "antigravity-oauth-token", "dashboard.token", "credentials.json", "secrets.json", ".env"}
+                or leaf.startswith(".antigravity-export-")
                 or leaf.startswith("auth-") and leaf.endswith(".json")
                 or leaf.startswith(".env.") and leaf != ".env.example"
                 or leaf.endswith((".log", ".pyc")))
