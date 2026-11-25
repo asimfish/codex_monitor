@@ -374,6 +374,18 @@ successful sync for the active Antigravity login. It refreshes every five minute
 while running. After switching accounts in the official app, click refresh to
 see the active account's quotas. Google manages the login in its own client.
 
+To track another Google account, expand **Antigravity**, click **添加账号**,
+and give it a label. Complete Google's sign-in through the official `agy`
+prompt that opens in Terminal. The profile stays on the list if sign-in is
+cancelled. Choose **登录** on that row to retry. The widget updates each
+signed-in profile independently alongside the system login.
+
+Additional profiles need `agy` 1.5.16 or later and a successful check of the
+CLI's local file storage isolation. The official CLI keeps each profile's
+credentials under its own private directory in
+`~/Library/Application Support/CodexMonitor/Antigravity`. The quota widget
+only handles the profile label, sync status and reported quota data.
+
 ### 3.3 Verification scope and downloads
 
 [Automated checks and native app builds](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain): choose a successful run containing `3f0cf4e` or newer code. The checks cover:

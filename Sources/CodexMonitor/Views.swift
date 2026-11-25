@@ -576,6 +576,8 @@ struct WidgetView: View {
         Button(L.manageAccounts) { AccountManagerController.shared.open(monitor: monitor) }
         Button("API 额度管理…") { ApiCreditsController.shared.open() }
         Button("Antigravity 登录 / 切换…") { antigravity.openLogin() }
+        Button("添加 Antigravity 账号…") { antigravity.addAccount() }
+            .disabled(antigravity.busy || !antigravity.signingIn.isEmpty || DemoData.enabled)
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Button(L.openUsagePage) {
             if let u = URL(string: "https://chatgpt.com/codex/settings/usage") { NSWorkspace.shared.open(u) }
@@ -1003,6 +1005,7 @@ struct MenuBarMenu: View {
     @ObservedObject var monitor: QuotaMonitor
     @ObservedObject var controller: PanelController
     @ObservedObject private var apiCredits = ApiCreditModel.shared
+    @ObservedObject private var antigravity = AntigravityModel.shared
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
 
     var body: some View {
@@ -1039,7 +1042,7 @@ struct MenuBarMenu: View {
         Button(L.refreshNow) {
             Task { await monitor.refreshAll() }
             Task { await apiCredits.run("refresh") }
-            Task { await AntigravityModel.shared.refresh() }
+            Task { await antigravity.refresh() }
         }
         Picker(L.windowLevel, selection: $controller.mode) {
             ForEach(WindowMode.allCases) { mode in
@@ -1059,7 +1062,9 @@ struct MenuBarMenu: View {
         ))
         Button(L.addAccountEllipsis) { LoginWindowController.shared.begin(monitor: monitor, panel: controller) }
         Button("API 额度管理…") { ApiCreditsController.shared.open() }
-        Button("Antigravity 登录 / 切换…") { AntigravityModel.shared.openLogin() }
+        Button("Antigravity 登录 / 切换…") { antigravity.openLogin() }
+        Button("添加 Antigravity 账号…") { antigravity.addAccount() }
+            .disabled(antigravity.busy || !antigravity.signingIn.isEmpty || DemoData.enabled)
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Divider()
         Button(L.quit) { NSApp.terminate(nil) }

@@ -327,6 +327,15 @@ API 记录独立于 Codex 登录，不会切换当前账号。原生窗口复用
 读取当前登录账号的模型额度，显示剩余百分比、重置时间和最近成功同步时间。
 运行中每五分钟自动刷新。在官方客户端切换账号后可点击悬窗的刷新按钮立即更新。
 
+要同时查看另一个 Google 账号，展开 **Antigravity**，点击 **添加账号**
+并输入名称。在弹出的终端中跟随官方 `agy` 的提示完成 Google 登录。
+取消登录时，账号仍保留在列表里，可以点击该行的 **登录** 重试。
+每个已登录账号独立同步额度，系统当前登录也会单独显示。
+
+独立账号需要 `agy` 1.5.16 或更新版本，并通过 CLI 登录隔离检查。
+官方 CLI 在 `~/Library/Application Support/CodexMonitor/Antigravity`
+下为每个账号使用私有目录。面板使用账号名称、同步状态和官方返回的额度数据。
+
 ### 3.3 验证范围与下载
 
 [自动测试与原生应用构建](https://github.com/asimfish/codex_monitor/actions/workflows/verify.yml?query=branch%3Amain)：请选择包含 `3f0cf4e` 或更新代码、且显示成功的运行。检查范围如下：

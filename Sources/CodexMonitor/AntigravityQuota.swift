@@ -56,15 +56,26 @@ struct AntigravityQuota: Decodable {
 }
 
 enum AntigravityCLI {
+    private struct Binary: Equatable {
+        let path: URL
+        let version: String
+        let modified: Date
+        let size: Int
+    }
+
+    private static let isolationLock = NSLock()
+    private static var verifiedBinary: Binary?
+
     enum Failure: String, Error {
         case missing = "安装官方 Antigravity CLI（agy）后即可同步额度。"
         case version = "请将 Antigravity CLI 更新到 1.1.11 或更新版本。"
         case login = "请登录 Antigravity，然后点刷新。"
+        case profilesUnsupported = "此 agy 版本无法验证账号隔离。请更新到 1.5.17 或更高版本。"
         case unavailable = "当前登录方式没有返回可显示的模型额度。"
         case failed = "额度读取失败，请检查 Antigravity 登录状态和网络后刷新。"
     }
 
-    private static func executable() throws -> URL {
+    static func executable() throws -> URL {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let paths = [home.appendingPathComponent(".local/bin/agy"),
                      URL(fileURLWithPath: "/opt/homebrew/bin/agy"),
@@ -75,26 +86,90 @@ enum AntigravityCLI {
         return command
     }
 
-    static func supportsQuota(_ version: String) -> Bool {
-        let numbers = version.trimmingCharacters(in: .whitespacesAndNewlines)
+    private static func versionNumbers(_ version: String) -> [Int] {
+        let parts = version.trimmingCharacters(in: .whitespacesAndNewlines)
             .split(separator: ".", omittingEmptySubsequences: false)
-        guard numbers.count == 3, let major = Int(numbers[0]), let minor = Int(numbers[1]),
-              let patch = Int(numbers[2]), min(major, minor, patch) >= 0 else { return false }
-        // v1.1.11 introduced read-only /usage in print mode. Older versions could submit it as a prompt.
-        return major > 1 || (major == 1 && (minor > 1 || (minor == 1 && patch >= 11)))
+        return parts.count == 3 ? parts.compactMap { Int($0) } : []
     }
 
-    static func readQuota() throws -> AntigravityQuota {
+    static func supportsQuota(_ version: String) -> Bool {
+        let numbers = versionNumbers(version)
+        guard numbers.count == 3, numbers.allSatisfy({ $0 >= 0 }) else { return false }
+        // v1.1.11 introduced read-only /usage in print mode. Older versions could submit it as a prompt.
+        return !numbers.lexicographicallyPrecedes([1, 1, 11])
+    }
+
+    private static func supportsProfiles(_ version: String) -> Bool {
+        let numbers = versionNumbers(version)
+        return numbers.count == 3 && numbers.allSatisfy { $0 >= 0 } &&
+            !numbers.lexicographicallyPrecedes([1, 5, 16])
+    }
+
+    static func readQuota(profile: URL? = nil) throws -> AntigravityQuota {
         let command = try executable()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("codex-monitor-agy-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
                                                 attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: directory) }
         let version = try run(command, ["--version"], in: directory)
-        guard version.status == 0, supportsQuota(String(decoding: version.output, as: UTF8.self)) else {
+        let versionText = String(decoding: version.output, as: UTF8.self)
+        guard version.status == 0, supportsQuota(versionText) else {
             throw Failure.version
         }
-        let result = try run(command, ["-p", "/usage", "--output-format", "json", "--print-timeout", "15s"], in: directory)
+        if profile != nil {
+            guard supportsProfiles(versionText) else { throw Failure.profilesUnsupported }
+            try verifyIsolation(command, version: versionText, in: directory)
+        }
+        return try query(command, profile: profile, in: directory)
+    }
+
+    static func verifyIsolation() throws -> URL {
+        let command = try executable()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("codex-monitor-agy-" + UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                                attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let version = try run(command, ["--version"], in: directory)
+        let versionText = String(decoding: version.output, as: UTF8.self)
+        guard version.status == 0, supportsProfiles(versionText) else {
+            throw Failure.profilesUnsupported
+        }
+        try verifyIsolation(command, version: versionText, in: directory)
+        return command
+    }
+
+    private static func verifyIsolation(_ command: URL, version: String, in directory: URL) throws {
+        // Repeat the empty-profile check after the executable is replaced or updated.
+        let path = command.resolvingSymlinksInPath()
+        let metadata = try path.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        guard let modified = metadata.contentModificationDate, let size = metadata.fileSize else {
+            throw Failure.profilesUnsupported
+        }
+        let binary = Binary(path: path, version: version, modified: modified, size: size)
+        isolationLock.lock()
+        defer { isolationLock.unlock() }
+        if verifiedBinary == binary { return }
+        let empty = directory.appendingPathComponent("empty-profile", isDirectory: true)
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: false,
+                                                attributes: [.posixPermissions: 0o700])
+        do {
+            _ = try query(command, profile: empty, in: directory)
+        } catch Failure.login {
+            // An empty profile must require its own login, even when the system account is signed in.
+            verifiedBinary = binary
+            return
+        } catch Failure.failed {
+            throw Failure.failed
+        } catch {
+            throw Failure.profilesUnsupported
+        }
+        throw Failure.profilesUnsupported
+    }
+
+    private static func query(_ command: URL, profile: URL?, in directory: URL) throws -> AntigravityQuota {
+        let profileArguments = profile.map { ["--gemini_dir", $0.path, "--app_data_dir", "antigravity-cli"] } ?? []
+        let arguments = profileArguments + ["-p", "/usage", "--output-format", "json", "--print-timeout", "15s"]
+        let result = try run(command, arguments, in: directory, isolated: profile != nil)
         if result.status != 0 {
             let message = String(decoding: result.output + result.diagnostics, as: UTF8.self).lowercased()
             if message.contains("authentication required") || message.contains("not authenticated") {
@@ -107,7 +182,7 @@ enum AntigravityCLI {
         return quota
     }
 
-    private static func run(_ executable: URL, _ arguments: [String], in directory: URL)
+    private static func run(_ executable: URL, _ arguments: [String], in directory: URL, isolated: Bool = false)
         throws -> (status: Int32, output: Data, diagnostics: Data) {
         let stdout = directory.appendingPathComponent("out")
         let stderr = directory.appendingPathComponent("err")
@@ -127,7 +202,9 @@ enum AntigravityCLI {
         let allowedEnvironment: Set<String> = ["HOME", "TMPDIR", "PATH", "USER", "LOGNAME",
                                                "LANG", "LC_ALL", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
                                                "https_proxy", "http_proxy", "no_proxy"]
-        process.environment = ProcessInfo.processInfo.environment.filter { allowedEnvironment.contains($0.key) }
+        var environment = ProcessInfo.processInfo.environment.filter { allowedEnvironment.contains($0.key) }
+        if isolated { environment["AGY_CLI_FORCE_FILE_TOKEN_STORAGE"] = "1" }
+        process.environment = environment
         try process.run()
         let timeout = DispatchWorkItem {
             if process.isRunning { process.terminate() }
@@ -156,6 +233,9 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var lastSync: Date?
     @Published private(set) var error: String?
     @Published private(set) var busy = false
+    @Published private(set) var accounts = AntigravityAccount.load()
+    @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
+    @Published private(set) var signingIn: Set<UUID> = []
     private var polling: Task<Void, Never>?
 
     func start() {
@@ -182,6 +262,64 @@ final class AntigravityModel: ObservableObject {
             groups = []
             lastSync = nil
             self.error = (error as? AntigravityCLI.Failure ?? .failed).rawValue
+        }
+        for account in accounts where !signingIn.contains(account.id) {
+            await refresh(account)
+        }
+    }
+
+    private func refresh(_ account: AntigravityAccount) async {
+        guard account.hasToken else {
+            saved[account.id] = nil
+            return
+        }
+        do {
+            let quota = try await Task.detached(priority: .utility) {
+                try AntigravityCLI.readQuota(profile: account.directory)
+            }.value
+            saved[account.id] = AntigravityAccountStatus(groups: quota.groups.filter { !$0.buckets.isEmpty }, sync: Date())
+        } catch {
+            saved[account.id] = AntigravityAccountStatus(error: (error as? AntigravityCLI.Failure ?? .failed).rawValue)
+        }
+    }
+
+    func addAccount() {
+        let controller = PanelController.shared
+        guard let name = controller.prompt(title: "添加 Antigravity 账号",
+                                           message: "给账号起个名字。接下来会打开终端，用 Google 登录这个独立账号。",
+                                           defaultValue: "") else { return }
+        guard name.count <= 80, !name.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
+              !accounts.contains(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }) else {
+            controller.info(title: "请输入不同的账号名", message: "名称不能重复，最多 80 个字符。")
+            return
+        }
+        let account = AntigravityAccount(id: UUID(), name: name)
+        accounts.append(account)
+        AntigravityAccount.save(accounts)
+        Task { await login(account) }
+    }
+
+    func login(_ account: AntigravityAccount) async {
+        guard signingIn.isEmpty, !DemoData.enabled else { return }
+        signingIn.insert(account.id)
+        defer { signingIn.remove(account.id) }
+        do {
+            let command = try await Task.detached(priority: .utility) { try AntigravityCLI.verifyIsolation() }.value
+            let script = try account.prepareLogin(command: command)
+            guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else {
+                throw AntigravityCLI.Failure.failed
+            }
+            _ = try await NSWorkspace.shared.open([script], withApplicationAt: terminal, configuration: .init())
+            for _ in 0..<150 {
+                if FileManager.default.fileExists(atPath: account.loginFinished.path) {
+                    try? FileManager.default.removeItem(at: account.loginFinished)
+                    await refresh(account)
+                    return
+                }
+                try await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        } catch {
+            saved[account.id] = AntigravityAccountStatus(error: (error as? AntigravityCLI.Failure ?? .failed).rawValue)
         }
     }
 
@@ -218,39 +356,80 @@ struct AntigravityWidgetSection: View {
                 }.buttonStyle(.plain).disabled(model.busy).help("刷新 Antigravity 额度")
             }.padding(.horizontal, 4)
             if expanded {
+                HStack {
+                    Text("当前系统登录").font(.caption2).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("添加账号") { model.addAccount() }
+                        .buttonStyle(.link).font(.caption)
+                        .disabled(model.busy || !model.signingIn.isEmpty || DemoData.enabled)
+                }.padding(.horizontal, 4)
                 if let error = model.error {
                     Text(error).font(.caption2).foregroundStyle(.secondary)
                 } else if model.groups.isEmpty {
                     Text(model.busy ? "正在读取额度…" : "登录 Antigravity 后可查看额度。")
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                ForEach(Array(model.groups.enumerated()), id: \.offset) { _, group in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(group.name).font(.system(size: 12, weight: .semibold))
-                        ForEach(Array(group.buckets.enumerated()), id: \.offset) { _, bucket in
-                            HStack(spacing: 8) {
-                                Text(bucket.title)
-                                Spacer()
-                                if bucket.disabled == true {
-                                    Text("已停用").foregroundStyle(.secondary)
-                                } else {
-                                    if let date = bucket.resetDate {
-                                        Text("重置 \(Fmt.dateTime.string(from: date))").foregroundStyle(.secondary)
-                                    }
-                                    Text(bucket.fraction.map { "剩余 " + $0.formatted(.percent.precision(.fractionLength(0))) } ?? "—")
-                                        .fontWeight(.semibold).monospacedDigit()
-                                }
-                            }.font(.caption)
-                        }
-                    }
-                    .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
-                }
+                quotaGroups(model.groups)
                 if let lastSync = model.lastSync {
-                    Text("当前登录 · 同步 \(Fmt.dateTime.string(from: lastSync))")
+                    Text("同步 \(Fmt.dateTime.string(from: lastSync))")
                         .font(.caption2).foregroundStyle(.secondary)
+                }
+                ForEach(model.accounts) { account in
+                    savedAccount(account)
                 }
             }
         }.accessibilityIdentifier("antigravity-section")
+    }
+
+    private func savedAccount(_ account: AntigravityAccount) -> some View {
+        let status = model.saved[account.id]
+        let signingIn = model.signingIn.contains(account.id)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(account.name).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Spacer()
+                Button(account.hasToken ? "重新登录" : "登录") {
+                    Task { await model.login(account) }
+                }.buttonStyle(.link).font(.caption)
+                    .disabled(model.busy || !model.signingIn.isEmpty)
+            }
+            if signingIn {
+                Text("请在终端完成 Google 登录。").font(.caption2).foregroundStyle(.secondary)
+            } else if let error = status?.error {
+                Text(error).font(.caption2).foregroundStyle(.secondary)
+            } else if let status = status, let sync = status.sync {
+                quotaGroups(status.groups)
+                Text("同步 \(Fmt.dateTime.string(from: sync))").font(.caption2).foregroundStyle(.secondary)
+            } else {
+                Text(account.hasToken ? "等待同步" : "尚未登录").font(.caption2).foregroundStyle(.secondary)
+            }
+        }.padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func quotaGroups(_ groups: [AntigravityQuota.Group]) -> some View {
+        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+            VStack(alignment: .leading, spacing: 6) {
+                Text(group.name).font(.system(size: 12, weight: .semibold))
+                ForEach(Array(group.buckets.enumerated()), id: \.offset) { _, bucket in
+                    HStack(spacing: 8) {
+                        Text(bucket.title)
+                        Spacer()
+                        if bucket.disabled == true {
+                            Text("已停用").foregroundStyle(.secondary)
+                        } else {
+                            if let date = bucket.resetDate {
+                                Text("重置 \(Fmt.dateTime.string(from: date))").foregroundStyle(.secondary)
+                            }
+                            Text(bucket.fraction.map { "剩余 " + $0.formatted(.percent.precision(.fractionLength(0))) } ?? "—")
+                                .fontWeight(.semibold).monospacedDigit()
+                        }
+                    }.font(.caption)
+                }
+            }
+            .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 10))
+        }
     }
 }
