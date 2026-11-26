@@ -389,10 +389,12 @@ cancelled. Choose **登录** on that row to retry. The Google email below the
 local account name identifies the actual login. Re-login starts a new Google
 authorization and keeps the previous login if cancelled or unsuccessful.
 The widget updates each
-signed-in profile independently alongside the system login. On a signed-in
-profile, **显示在收起栏** (Show in collapsed strip) selects its Gemini quota for
-the collapsed widget. Click the same button on the system row to restore the
-default source. The system row shows the email reported by the official CLI.
+signed-in profile independently alongside the system login. **切换** (Switch)
+pins the chosen account at the top, marks it as active, and uses its Gemini quota
+in the collapsed widget. Use the same button on the system card to switch back.
+For the official client, choose **切换官方登录…** in the target account's menu.
+After signing in there, click **核对登录** (Verify sign-in) in the widget. A
+matching email switches the panel to the newly signed-in system account.
 When identity is temporarily unavailable, it labels the last observed email. If Google
 authorized an account and Antigravity requests further verification, use the
 verification entry on that account's card, then refresh it.
