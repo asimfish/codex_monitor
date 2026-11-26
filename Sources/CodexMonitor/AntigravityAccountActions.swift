@@ -23,7 +23,7 @@ struct AntigravityAccountMenu: View {
         Menu {
             Button(L.renameAccount) { rename() }
             Button(L.editTags) { Self.editTags(account, model: model) }
-            if model.accounts.count > 1 {
+            if model.accounts.count > 1 && account.id != model.activeAccount?.id {
                 Menu(L.reorderAccounts) {
                     Button(L.moveAccountFirst) { model.moveAccount(account, direction: .first) }
                     Button(L.moveAccountUp) { model.moveAccount(account, direction: .up) }
@@ -36,6 +36,9 @@ struct AntigravityAccountMenu: View {
                 }
             }
             if hasToken && !signingIn {
+                Divider()
+                Button("切换官方登录…") { model.beginSystemSwitch(account) }
+                    .disabled(DemoData.enabled)
                 Divider()
                 Button("复制登录凭证") { copyCredential() }
                 Button("复制凭证路径") { copyPath() }

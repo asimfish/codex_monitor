@@ -322,8 +322,14 @@ enum AntigravityCLI {
 
 @MainActor
 final class AntigravityModel: ObservableObject {
+    struct SystemSwitch {
+        let accountID: UUID
+        let email: String
+        var needsRetry = false
+    }
+
     static let shared = AntigravityModel()
-    private static let stripAccountKey = "antigravityStripAccountID"
+    private static let activeAccountKey = "antigravityStripAccountID"
     private static let previousSystemEmailKey = "antigravityPreviousSystemEmail"
     @Published private(set) var groups: [AntigravityQuota.Group] = []
     @Published private(set) var lastSync: Date?
@@ -339,8 +345,9 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var accounts = AntigravityAccount.load()
     @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
     @Published private var accountOrder = AccountOrder(keyPrefix: "antigravityAccount")
-    @Published private var stripAccountID = UserDefaults.standard.string(forKey: AntigravityModel.stripAccountKey)
+    @Published private var activeAccountID = UserDefaults.standard.string(forKey: AntigravityModel.activeAccountKey)
         .flatMap(UUID.init(uuidString:))
+    @Published private(set) var systemSwitch: SystemSwitch?
     @Published private(set) var signingIn: Set<UUID> = []
     private var loginProcess: Process?
     @Published private(set) var loginURL: URL?
@@ -373,18 +380,19 @@ final class AntigravityModel: ObservableObject {
     }
 
     func moveAccount(_ account: AntigravityAccount, direction: AccountOrder.Move) {
+        let pinned = activeAccount.map { Set([$0.id.uuidString]) } ?? []
         accountOrder.move(account.id.uuidString, direction: direction, available: accounts.map { $0.id.uuidString },
-                          pinned: [], priorities: accountPriorities)
+                          pinned: pinned, priorities: accountPriorities)
     }
 
     func restoreAutomaticAccountOrder() { accountOrder.useAutomaticOrder() }
 
-    var stripAccount: AntigravityAccount? {
-        accounts.first { $0.id == stripAccountID }
+    var activeAccount: AntigravityAccount? {
+        accounts.first { $0.id == activeAccountID && $0.hasToken }
     }
 
-    var stripStatus: AntigravityAccountStatus? {
-        if let account = stripAccount { return saved[account.id] }
+    var activeStatus: AntigravityAccountStatus? {
+        if let account = activeAccount { return saved[account.id] }
         return systemStatus
     }
 
@@ -393,19 +401,44 @@ final class AntigravityModel: ObservableObject {
                                 email: systemEmail, planTier: systemPlan, remainingCredits: systemCredits)
     }
 
-    func setStripAccount(_ account: AntigravityAccount?) {
+    func selectActiveAccount(_ account: AntigravityAccount?) {
         if let account {
-            guard accounts.contains(where: { $0.id == account.id }), account.hasToken else { return }
+            guard accounts.contains(where: { $0.id == account.id }), account.hasToken,
+                  !signingIn.contains(account.id) else { return }
         }
-        guard stripAccountID != account?.id else { return }
-        stripAccountID = account?.id
-        UserDefaults.standard.set(account?.id.uuidString, forKey: Self.stripAccountKey)
+        guard activeAccountID != account?.id else { return }
+        storeActiveAccount(account?.id)
         if let account {
             Task { await refreshSavedAccount(account) }
         } else {
-            Task { await refresh() }
+            Task { await refreshSystemAccount() }
         }
     }
+
+    private func storeActiveAccount(_ id: UUID?) {
+        activeAccountID = id
+        UserDefaults.standard.set(id?.uuidString, forKey: Self.activeAccountKey)
+    }
+
+    func beginSystemSwitch(_ account: AntigravityAccount) {
+        guard account.hasToken, !signingIn.contains(account.id),
+              accounts.contains(where: { $0.id == account.id }), let email = saved[account.id]?.email else {
+            PanelController.shared.info(title: "切换官方登录", message: "请先登录此独立账号并刷新，确认它的 Google 邮箱。")
+            return
+        }
+        guard systemEmail?.caseInsensitiveCompare(email) != .orderedSame else {
+            selectActiveAccount(nil)
+            PanelController.shared.info(title: "切换官方登录", message: "官方客户端已登录 \(email)。")
+            return
+        }
+        guard PanelController.shared.confirm(title: "切换官方登录到「\(account.name)」",
+                                             message: "在 Antigravity 的设置 → Account 退出当前登录，再登录 \(email)。完成后回到悬浮窗点「核对登录」。",
+                                             okTitle: "打开官方客户端") else { return }
+        systemSwitch = SystemSwitch(accountID: account.id, email: email)
+        openLogin()
+    }
+
+    func cancelSystemSwitch() { systemSwitch = nil }
 
     func start() {
         guard polling == nil else { return }
@@ -429,13 +462,35 @@ final class AntigravityModel: ObservableObject {
         guard !busy, !DemoData.enabled else { return }
         busy = true
         defer { busy = false }
-        let identity = Task.detached(priority: .utility) { AntigravityCLI.readIdentity() }
-        let quota = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.result
-        let account = await identity.value
-        applySystemRefresh(quota, email: account?.email, plan: account?.planTier)
+        await readSystemAccount()
         for account in accounts where !signingIn.contains(account.id) {
             await refresh(account)
         }
+    }
+
+    func refreshSystemAccount() async {
+        guard !busy, !DemoData.enabled else { return }
+        busy = true
+        defer { busy = false }
+        await readSystemAccount()
+    }
+
+    private func readSystemAccount() async {
+        let checkingSwitch = systemSwitch != nil
+        let identity = Task.detached(priority: .utility) { AntigravityCLI.readIdentity() }
+        // During a switch, begin the quota query after reading the new identity.
+        // Ordinary polling can fetch both in parallel.
+        let before = checkingSwitch ? await identity.value : nil
+        let quota = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.result
+        let account = await identity.value
+        if checkingSwitch, before?.email != nil {
+            let after = await Task.detached(priority: .utility) { AntigravityCLI.readIdentity() }.value
+            guard before?.email == after?.email else {
+                applySystemRefresh(.failure(AntigravityCLI.Failure.failed), email: after?.email, plan: after?.planTier)
+                return
+            }
+        }
+        applySystemRefresh(quota, email: account?.email, plan: account?.planTier)
     }
 
     func applySystemRefresh(_ result: Result<AntigravityQuota, Error>, email: String?, plan: String? = nil) {
@@ -466,6 +521,19 @@ final class AntigravityModel: ObservableObject {
                 systemCredits = nil
                 lastSync = nil
                 systemQuotaEmail = nil
+            }
+        }
+        if let pending = systemSwitch {
+            let verified: Bool
+            switch result {
+            case .success: verified = true
+            case .failure(let error): verified = error is AntigravityCLI.Eligibility
+            }
+            if verified && email?.caseInsensitiveCompare(pending.email) == .orderedSame {
+                systemSwitch = nil
+                storeActiveAccount(nil)
+            } else {
+                systemSwitch?.needsRetry = true
             }
         }
     }
@@ -548,6 +616,8 @@ final class AntigravityModel: ObservableObject {
         let account = try credentialAccount(id)
         try account.signOut()
         saved[id] = nil
+        if activeAccountID == id { selectActiveAccount(nil) }
+        if systemSwitch?.accountID == id { cancelSystemSwitch() }
     }
 
     func removeAccount(_ id: UUID) throws -> URL? {
@@ -556,7 +626,8 @@ final class AntigravityModel: ObservableObject {
         let backup = try account.archive()
         accounts.removeAll { $0.id == id }
         saved[id] = nil
-        if stripAccountID == id { setStripAccount(nil) }
+        if activeAccountID == id { selectActiveAccount(nil) }
+        if systemSwitch?.accountID == id { cancelSystemSwitch() }
         AntigravityAccount.save(accounts)
         return backup
     }

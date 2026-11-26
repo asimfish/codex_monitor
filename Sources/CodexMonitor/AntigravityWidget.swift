@@ -4,15 +4,19 @@ struct AntigravityWidgetSection: View {
     @ObservedObject var model: AntigravityModel
     @AppStorage("antigravityExpanded") private var expanded = true
     @State private var collapsedAccounts: Set<UUID> = []
+    @State private var systemCollapsed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             header
             if expanded {
-                systemCard
+                let active = model.activeAccount
+                if let pending = model.systemSwitch { systemSwitchNotice(pending) }
+                if let active { savedCard(active, active: true) }
+                else { systemCard(active: true) }
                 HStack {
                     if !model.accounts.isEmpty {
-                        Text("独立账号 · \(model.accounts.count)")
+                        Text("其他账号 · \(model.accounts.count)")
                             .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
@@ -20,7 +24,8 @@ struct AntigravityWidgetSection: View {
                         .buttonStyle(.bordered).controlSize(.mini)
                         .disabled(model.busy || !model.signingIn.isEmpty || DemoData.enabled)
                 }.padding(.horizontal, 4)
-                ForEach(model.orderedAccounts) { savedCard($0) }
+                if active != nil { systemCard(active: false) }
+                ForEach(model.orderedAccounts.filter { $0.id != active?.id }) { savedCard($0, active: false) }
             }
         }.accessibilityIdentifier("antigravity-section")
     }
@@ -45,34 +50,36 @@ struct AntigravityWidgetSection: View {
         }.padding(.horizontal, 4)
     }
 
-    private var systemCard: some View {
+    private func systemCard(active: Bool) -> some View {
         let status = model.systemStatus
-        let selected = model.stripAccount == nil
+        let open = active || !systemCollapsed
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 accountTitle(status.email ?? "系统账号", status: status, stale: model.systemQuotaIsStale)
                 Spacer(minLength: 4)
-                stripAction(selected: selected) { model.setStripAccount(nil) }
+                accountSwitch(active: active) { model.selectActiveAccount(nil) }
+                if !active { detailsToggle(open: open) { systemCollapsed.toggle() } }
             }
             Label("当前系统登录", systemImage: "person.crop.circle")
                 .font(.caption2).foregroundStyle(.secondary)
-            if status.email == nil, let email = model.previousSystemEmail {
-                Text("上次识别：\(email)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                    .truncationMode(.middle).help(email)
+            if open {
+                if status.email == nil, let email = model.previousSystemEmail {
+                    Text("上次识别：\(email)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        .truncationMode(.middle).help(email)
+                }
+                details(status, waiting: model.busy, stale: model.systemQuotaIsStale, signedIn: status.email != nil)
             }
-            details(status, waiting: model.busy, stale: model.systemQuotaIsStale, signedIn: status.email != nil)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .quotaCardStyle(highlighted: true)
+        .quotaCardStyle(highlighted: active)
         .accessibilityIdentifier("antigravity-system-account")
     }
 
-    private func savedCard(_ account: AntigravityAccount) -> some View {
+    private func savedCard(_ account: AntigravityAccount, active: Bool) -> some View {
         let status = model.saved[account.id] ?? AntigravityAccountStatus()
         let signingIn = model.signingIn.contains(account.id)
         let hasToken = account.hasToken
-        let selected = account.id == model.stripAccount?.id
-        let open = !collapsedAccounts.contains(account.id)
+        let open = active || !collapsedAccounts.contains(account.id)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
                 accountTitle(account.name, status: status, unavailable: account.annotation?.unavailable == true)
@@ -87,16 +94,15 @@ struct AntigravityWidgetSection: View {
                     }
                 }
                 AntigravityAccountMenu(account: account, hasToken: hasToken, model: model)
-                Button {
-                    if open { collapsedAccounts.insert(account.id) }
-                    else { collapsedAccounts.remove(account.id) }
-                } label: {
-                    Image(systemName: open ? "chevron.up" : "chevron.right")
-                        .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                        .padding(.vertical, 3)
+                if active || (hasToken && !signingIn) {
+                    accountSwitch(active: active) { model.selectActiveAccount(account) }
                 }
-                .buttonStyle(.plain).help(open ? L.collapseCard : L.expandCard)
-                .accessibilityLabel(open ? L.collapseCard : L.expandCard)
+                if !active {
+                    detailsToggle(open: open) {
+                        if open { collapsedAccounts.insert(account.id) }
+                        else { collapsedAccounts.remove(account.id) }
+                    }
+                }
             }
             if open {
                 if let email = status.email, email.caseInsensitiveCompare(account.name) != .orderedSame {
@@ -123,10 +129,6 @@ struct AntigravityWidgetSection: View {
                         .buttonStyle(.plain).disabled(model.busy).help("刷新此账号额度")
                         .accessibilityLabel("刷新此账号额度")
                     }
-                    Spacer(minLength: 4)
-                    if selected || (hasToken && !signingIn) {
-                        stripAction(selected: selected) { model.setStripAccount(account) }
-                    }
                 }
                 EditableAccountTags(annotation: account.annotation ?? AccountAnnotation()) {
                     AntigravityAccountMenu.editTags(account, model: model)
@@ -134,19 +136,47 @@ struct AntigravityWidgetSection: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .quotaCardStyle(highlighted: false)
+        .quotaCardStyle(highlighted: active)
     }
 
-    private func stripAction(selected: Bool, action: @escaping () -> Void) -> some View {
+    private func accountSwitch(active: Bool, action: @escaping () -> Void) -> some View {
         Group {
-            if selected {
-                Label("收起栏", systemImage: "checkmark").font(.caption2.weight(.medium))
-                    .foregroundStyle(Color.accentColor)
+            if active {
+                Text(L.inUse).font(.caption2.weight(.medium)).foregroundStyle(Color.accentColor)
+                    .help("此账号显示在面板主卡和 Gemini 收起栏")
             } else {
-                Button("显示在收起栏", action: action).buttonStyle(.bordered).controlSize(.mini)
-                    .help("收起时显示此账号的 Gemini 额度")
+                Button(L.switchBtn, action: action).buttonStyle(.bordered).controlSize(.mini)
+                    .help("切换面板主卡和 Gemini 收起栏显示的账号")
             }
         }.fixedSize()
+    }
+
+    private func detailsToggle(open: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: open ? "chevron.up" : "chevron.right")
+                .font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                .padding(.vertical, 3)
+        }
+        .buttonStyle(.plain).help(open ? L.collapseCard : L.expandCard)
+        .accessibilityLabel(open ? L.collapseCard : L.expandCard)
+    }
+
+    private func systemSwitchNotice(_ pending: AntigravityModel.SystemSwitch) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("等待官方登录：\(pending.email)").font(.caption.weight(.medium))
+                .lineLimit(1).truncationMode(.middle).help(pending.email)
+            if pending.needsRetry {
+                Text("尚未核对到目标账号，请确认官方客户端登录后重试。")
+                    .font(.caption2).foregroundStyle(.orange)
+            }
+            HStack(spacing: 8) {
+                Button("核对登录") { Task { await model.refreshSystemAccount() } }
+                    .buttonStyle(.bordered).controlSize(.mini).disabled(model.busy)
+                Button(L.cancel) { model.cancelSystemSwitch() }.buttonStyle(.link).font(.caption)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .quotaCardStyle(highlighted: false)
     }
 
     private func accountTitle(_ title: String, status: AntigravityAccountStatus,

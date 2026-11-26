@@ -89,10 +89,10 @@ struct CollapsedStripView: View {
         let _ = monitor.clockTick
         let entry = monitor.activeEntry
         let window = entry?.tightestWindow
-        let geminiStatus = antigravity.stripStatus
+        let geminiStatus = antigravity.activeStatus
         let gemini = geminiStatus.flatMap { AntigravityQuota.tightestGeminiBucket(in: $0.groups) }
         let geminiRemaining = gemini?.fraction.map { $0 * 100 }
-        let geminiSource = antigravity.stripAccount?.name ?? antigravity.systemEmail ?? "系统账号"
+        let geminiSource = antigravity.activeAccount?.name ?? antigravity.systemEmail ?? "系统账号"
         // Everything except the bottom chevron is plain content, so clicking/dragging the strip
         // only moves the window; expanding takes a deliberate click on the arrow.
         VStack(spacing: 6) {
@@ -107,7 +107,7 @@ struct CollapsedStripView: View {
             Divider()
             CompactQuotaMeter(
                 title: "Gemini", remaining: geminiRemaining, reset: gemini?.resetDate,
-                status: antigravity.stripAccount == nil && antigravity.systemQuotaIsStale
+                status: antigravity.activeAccount == nil && antigravity.systemQuotaIsStale
                     ? .yellow : geminiRemaining.map { quotaColor(remaining: $0) } ?? .gray,
                 hasIssue: geminiStatus?.error != nil || geminiStatus?.eligibility != nil,
                 isLoading: antigravity.busy && geminiStatus?.sync == nil
