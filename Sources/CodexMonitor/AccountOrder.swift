@@ -2,16 +2,18 @@ import Foundation
 
 struct AccountOrder {
     enum Move { case up, down, first, last }
-    private static let key = "accountDisplayOrder"
-    private static let automaticKey = "accountAutomaticOrder"
+    private let key: String
+    private let automaticKey: String
     private(set) var automatic: Bool
     private let defaults: UserDefaults
     private(set) var ids: [String]
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = .standard, keyPrefix: String = "account") {
         self.defaults = defaults
-        automatic = defaults.object(forKey: Self.automaticKey) as? Bool ?? true
-        ids = defaults.stringArray(forKey: Self.key) ?? []
+        key = keyPrefix + "DisplayOrder"
+        automaticKey = keyPrefix + "AutomaticOrder"
+        automatic = defaults.object(forKey: automaticKey) as? Bool ?? true
+        ids = defaults.stringArray(forKey: key) ?? []
     }
 
     func sorted(_ available: [String], priorities: [String: Int] = [:]) -> [String] {
@@ -35,13 +37,13 @@ struct AccountOrder {
 
     mutating func useAutomaticOrder() {
         automatic = true
-        defaults.set(true, forKey: Self.automaticKey)
+        defaults.set(true, forKey: automaticKey)
     }
 
     mutating func rename(_ oldId: String, to newId: String) {
         guard oldId != newId, ids.contains(oldId) else { return }
         ids = ids.filter { $0 != newId }.map { $0 == oldId ? newId : $0 }
-        defaults.set(ids, forKey: Self.key)
+        defaults.set(ids, forKey: key)
     }
 
     mutating func move(_ id: String, direction: Move, available: [String], pinned: Set<String>, priorities: [String: Int] = [:]) {
@@ -59,8 +61,8 @@ struct AccountOrder {
         movable.insert(movable.remove(at: source), at: target)
         var iterator = movable.makeIterator()
         ids = all.map { pinned.contains($0) ? $0 : iterator.next()! }
-        defaults.set(ids, forKey: Self.key)
+        defaults.set(ids, forKey: key)
         automatic = false
-        defaults.set(false, forKey: Self.automaticKey)
+        defaults.set(false, forKey: automaticKey)
     }
 }

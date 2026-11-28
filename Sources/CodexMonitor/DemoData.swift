@@ -5,6 +5,21 @@ import Foundation
 enum DemoData {
     static var enabled: Bool { ProcessInfo.processInfo.environment["CODEX_MONITOR_DEMO"] == "1" }
 
+    static func antigravityGroups(now: Date = Date()) -> [AntigravityQuota.Group] {
+        [
+            .init(name: "Gemini Models", buckets: [
+                .init(name: "Five Hour Limit Remaining", window: "5h", remainingFraction: 0.64,
+                      resetTime: ISO8601.format(now.addingTimeInterval(7200)), disabled: nil),
+                .init(name: "Weekly Limit Remaining", window: "weekly", remainingFraction: 0.43,
+                      resetTime: ISO8601.format(now.addingTimeInterval(172800)), disabled: nil)
+            ]),
+            .init(name: "Claude and GPT models", buckets: [
+                .init(name: "Weekly Limit Remaining", window: "weekly", remainingFraction: 0.12,
+                      resetTime: ISO8601.format(now.addingTimeInterval(172800)), disabled: nil)
+            ])
+        ]
+    }
+
     static func apiAccounts(now: Date = Date()) -> [ApiCreditAccount] {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!

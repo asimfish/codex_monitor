@@ -443,6 +443,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("action", choices=["list", "save", "connect", "open-settings", "refresh", "poll", "remove"], nargs="?", default="list")
     s.add_argument("--id")
     s.set_defaults(fn=cmd_api_credits)
+    s = sp.add_parser("antigravity-login", help="open an isolated Google sign-in for the macOS widget")
+    s.add_argument("profile")
+    s.add_argument("agy")
+    s.set_defaults(fn=cmd_antigravity_login)
+    s = sp.add_parser("antigravity-identity", help="read the current Antigravity account for the macOS widget")
+    s.add_argument("agy")
+    s.add_argument("--profile", help="look up an isolated account by UUID")
+    s.set_defaults(fn=cmd_antigravity_identity)
     return p
 
 
@@ -469,6 +477,27 @@ def cmd_api_credits(args):
     elif args.action in ("refresh", "poll"):
         manager.refresh(args.id, force=args.action == "refresh")
     print(json.dumps(manager.snapshot(), ensure_ascii=False))
+
+
+def cmd_antigravity_login(args):
+    if not paths.IS_MAC:
+        raise StoreError("Antigravity browser sign-in is supported on macOS.")
+    from .antigravity_login import LoginError, run
+    try:
+        run(args.profile, args.agy)
+    except LoginError as error:
+        raise StoreError(str(error)) from None
+
+
+def cmd_antigravity_identity(args):
+    if not paths.IS_MAC:
+        raise StoreError("Antigravity identity lookup is supported on macOS.")
+    from .antigravity_login import LoginError, read_identity
+    try:
+        identity = read_identity(args.agy, args.profile)
+    except (LoginError, OSError, ValueError):
+        identity = None
+    print(json.dumps(identity or {"email": None}, ensure_ascii=False))
 
 
 def main(argv: Optional[List[str]] = None) -> None:

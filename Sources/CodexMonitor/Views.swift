@@ -78,51 +78,42 @@ struct PlanBadge: View {
     }
 }
 
-// MARK: - Collapsed vertical strip (active account only)
+// MARK: - Collapsed vertical strip
 
 struct CollapsedStripView: View {
     @ObservedObject var monitor: QuotaMonitor
     @ObservedObject var controller: PanelController
+    @ObservedObject private var antigravity = AntigravityModel.shared
 
     var body: some View {
         let _ = monitor.clockTick
         let entry = monitor.activeEntry
         let window = entry?.tightestWindow
+        let geminiStatus = antigravity.activeStatus
+        let gemini = geminiStatus.flatMap { AntigravityQuota.tightestGeminiBucket(in: $0.groups) }
+        let geminiRemaining = gemini?.fraction.map { $0 * 100 }
+        let geminiSource = antigravity.activeAccount?.name ?? antigravity.systemEmail ?? "系统账号"
         // Everything except the bottom chevron is plain content, so clicking/dragging the strip
         // only moves the window; expanding takes a deliberate click on the arrow.
         VStack(spacing: 6) {
             Image(systemName: "line.3.horizontal")
                 .font(.system(size: 9))
                 .foregroundStyle(.tertiary)
-            Circle().fill(entry?.statusColor ?? .gray).frame(width: 8, height: 8)
-            VerticalQuotaBar(
-                fraction: (window?.remainingPercent ?? 0) / 100,
-                color: quotaColor(remaining: window?.remainingPercent ?? 100),
-                indeterminate: window == nil
-            )
-            .frame(width: 8, height: 64)
-            if let w = window {
-                Text(Fmt.percent(w.remainingPercent))
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .monospacedDigit()
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
-                if let d = w.resetDate {
-                    Text(Fmt.shortCountdown(to: d))
-                        .font(.system(size: 9))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                }
-            } else if entry?.error != nil {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.orange)
-            } else if entry == nil {
-                Text(L.dash).font(.system(size: 10, weight: .bold))
-            } else {
-                ProgressView().controlSize(.mini)
-            }
+            CompactQuotaMeter(
+                title: "Codex", remaining: window?.remainingPercent, reset: window?.resetDate,
+                status: entry?.statusColor ?? .gray, hasIssue: entry?.error != nil,
+                isLoading: entry != nil && entry?.error == nil && window == nil
+            ).help(window.map { "Codex · \($0.label)" } ?? "Codex")
+            Divider()
+            let geminiStale = (antigravity.activeAccount == nil && antigravity.systemQuotaIsStale)
+                || (geminiStatus?.isStale == true)
+            CompactQuotaMeter(
+                title: "Gemini", remaining: geminiRemaining, reset: gemini?.resetDate,
+                status: geminiStale
+                    ? .yellow : geminiRemaining.map { quotaColor(remaining: $0) } ?? .gray,
+                hasIssue: geminiRemaining == nil && (geminiStatus?.error != nil || geminiStatus?.eligibility != nil),
+                isLoading: antigravity.busy && geminiStatus?.sync == nil
+            ).help(gemini.map { "Gemini · \(geminiSource) · \($0.title)" } ?? "Gemini · \(geminiSource)")
             Button {
                 controller.isCollapsed = false
             } label: {
@@ -144,6 +135,45 @@ struct CollapsedStripView: View {
                 .strokeBorder(Color.white.opacity(0.14), lineWidth: 1)
         )
         .padding(2)
+    }
+}
+
+private struct CompactQuotaMeter: View {
+    let title: String
+    let remaining: Double?
+    let reset: Date?
+    let status: Color
+    let hasIssue: Bool
+    let isLoading: Bool
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(title).font(.system(size: 9, weight: .semibold))
+                .lineLimit(1).minimumScaleFactor(0.8)
+            Circle().fill(status).frame(width: 6, height: 6)
+            VerticalQuotaBar(fraction: (remaining ?? 0) / 100,
+                             color: quotaColor(remaining: remaining ?? 100),
+                             indeterminate: remaining == nil)
+                .frame(width: 8, height: 44)
+            if let remaining = remaining {
+                Text(Fmt.percent(remaining))
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+                if let reset = reset {
+                    Text(Fmt.shortCountdown(to: reset))
+                        .font(.system(size: 9)).foregroundStyle(.secondary)
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                }
+            } else if hasIssue {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10)).foregroundStyle(.orange)
+            } else if isLoading {
+                ProgressView().controlSize(.mini)
+            } else {
+                Text(L.dash).font(.system(size: 10, weight: .bold))
+            }
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -576,6 +606,11 @@ struct WidgetView: View {
         Button(L.manageAccounts) { AccountManagerController.shared.open(monitor: monitor) }
         Button("API 额度管理…") { ApiCreditsController.shared.open() }
         Button("Antigravity 登录 / 切换…") { antigravity.openLogin() }
+        Button("添加 Antigravity 账号…") { antigravity.addAccount() }
+            .disabled(antigravity.busy || !antigravity.signingIn.isEmpty || DemoData.enabled)
+        if !antigravity.signingIn.isEmpty {
+            Button("打开 Antigravity 登录窗口…") { antigravity.showSignInWindow() }
+        }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Button(L.openUsagePage) {
             if let u = URL(string: "https://chatgpt.com/codex/settings/usage") { NSWorkspace.shared.open(u) }
@@ -691,15 +726,7 @@ struct AccountCard: View {
                     .foregroundStyle(.orange)
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(entry.isActive ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(entry.isActive ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
-        )
+        .quotaCardStyle(highlighted: entry.isActive)
         .help(entry.profile.authURL.path)
     }
 
@@ -955,28 +982,52 @@ func quotaColor(remaining r: Double) -> Color {
 struct WindowRow: View {
     let window: RateLimitWindow
 
-    private var color: Color { quotaColor(remaining: window.remainingPercent) }
+    var body: some View {
+        QuotaWindowRow(label: window.label, remaining: window.remainingPercent, reset: window.resetDate)
+    }
+}
+
+struct QuotaWindowRow: View {
+    let label: String
+    let remaining: Double?
+    let reset: Date?
+    var disabled = false
+    var showsUsed = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
-                Text(window.label)
+                Text(label)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(width: 44, alignment: .leading)
-                QuotaBar(fraction: window.remainingPercent / 100, color: color)
-                Text(L.remaining(Fmt.percent(window.remainingPercent)))
+                    .lineLimit(1).minimumScaleFactor(0.8).help(label)
+                QuotaBar(fraction: (remaining ?? 0) / 100, color: remaining.map(quotaColor(remaining:)) ?? .gray)
+                Text(disabled ? "已停用" : remaining.map { L.remaining(Fmt.percent($0)) } ?? L.dash)
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .monospacedDigit()
                     .frame(width: 78, alignment: .trailing)
             }
-            if let d = window.resetDate {
-                Text(L.resetAt(Fmt.dateTime.string(from: d), Fmt.countdown(to: d)))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 52)
+            if !disabled && (reset != nil || (showsUsed && remaining != nil)) {
+                HStack(spacing: 4) {
+                    if let reset { Text(L.resetAt(Fmt.dateTime.string(from: reset), Fmt.countdown(to: reset))) }
+                    if showsUsed, let remaining {
+                        Spacer(minLength: 2)
+                        Text("已用 \(Fmt.percent(100 - remaining))").monospacedDigit()
+                    }
+                }
+                .font(.caption2).foregroundStyle(.secondary).padding(.leading, 52)
             }
         }
+    }
+}
+
+extension View {
+    func quotaCardStyle(highlighted: Bool) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+        return padding(10)
+            .background(highlighted ? Color.accentColor.opacity(0.12) : Color.primary.opacity(0.05), in: shape)
+            .overlay { shape.strokeBorder(highlighted ? Color.accentColor.opacity(0.35) : .clear, lineWidth: 1) }
     }
 }
 
@@ -1003,6 +1054,7 @@ struct MenuBarMenu: View {
     @ObservedObject var monitor: QuotaMonitor
     @ObservedObject var controller: PanelController
     @ObservedObject private var apiCredits = ApiCreditModel.shared
+    @ObservedObject private var antigravity = AntigravityModel.shared
     @State private var launchAtLogin = LaunchAtLogin.isEnabled
 
     var body: some View {
@@ -1039,7 +1091,7 @@ struct MenuBarMenu: View {
         Button(L.refreshNow) {
             Task { await monitor.refreshAll() }
             Task { await apiCredits.run("refresh") }
-            Task { await AntigravityModel.shared.refresh() }
+            Task { await antigravity.refresh() }
         }
         Picker(L.windowLevel, selection: $controller.mode) {
             ForEach(WindowMode.allCases) { mode in
@@ -1059,7 +1111,12 @@ struct MenuBarMenu: View {
         ))
         Button(L.addAccountEllipsis) { LoginWindowController.shared.begin(monitor: monitor, panel: controller) }
         Button("API 额度管理…") { ApiCreditsController.shared.open() }
-        Button("Antigravity 登录 / 切换…") { AntigravityModel.shared.openLogin() }
+        Button("Antigravity 登录 / 切换…") { antigravity.openLogin() }
+        Button("添加 Antigravity 账号…") { antigravity.addAccount() }
+            .disabled(antigravity.busy || !antigravity.signingIn.isEmpty || DemoData.enabled)
+        if !antigravity.signingIn.isEmpty {
+            Button("打开 Antigravity 登录窗口…") { antigravity.showSignInWindow() }
+        }
         Button(L.openAccountsFolder) { NSWorkspace.shared.open(monitor.store.accountsRoot) }
         Divider()
         Button(L.quit) { NSApp.terminate(nil) }

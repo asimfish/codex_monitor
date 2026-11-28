@@ -11,11 +11,21 @@ struct AccountTagRow: View {
     @ObservedObject var monitor: QuotaMonitor
 
     var body: some View {
-        let annotation = monitor.annotation(for: entry)
+        EditableAccountTags(annotation: monitor.annotation(for: entry)) {
+            TagEditorController.shared.open(entry: entry, monitor: monitor)
+        }
+    }
+}
+
+struct EditableAccountTags: View {
+    let annotation: AccountAnnotation
+    let edit: () -> Void
+
+    var body: some View {
         TagFlowLayout(spacing: 4) {
             ForEach(Array(annotation.tags.enumerated()), id: \.offset) { item in
                 let tag = item.element
-                Button { TagEditorController.shared.open(entry: entry, monitor: monitor) } label: {
+                Button(action: edit) {
                     Text(tag)
                         .font(.system(size: 10))
                         .foregroundStyle(.red)
@@ -28,9 +38,7 @@ struct AccountTagRow: View {
             if annotation.unavailable {
                 Text(L.markedUnavailable).font(.system(size: 9)).foregroundStyle(.red)
             }
-            Button {
-                TagEditorController.shared.open(entry: entry, monitor: monitor)
-            } label: {
+            Button(action: edit) {
                 Label(annotation.tags.isEmpty ? L.addTag : L.editTags, systemImage: annotation.tags.isEmpty ? "plus" : "pencil")
                     .font(.system(size: 10))
             }
@@ -77,20 +85,29 @@ final class TagEditorController: NSObject, NSWindowDelegate {
     private var windows: [String: NSWindow] = [:]
 
     func open(entry: QuotaMonitor.Entry, monitor: QuotaMonitor) {
-        if let window = windows[entry.id] {
+        let expectedKey = monitor.annotationKey(for: entry)
+        open(id: "codex:" + entry.id, name: entry.profile.displayName,
+             annotation: monitor.annotation(for: entry), hint: L.tagHint) { tags, unavailable in
+            try monitor.saveAnnotations(entryId: entry.id, expectedKey: expectedKey, tags: tags, unavailable: unavailable)
+        }
+    }
+
+    func open(id: String, name: String, annotation: AccountAnnotation, hint: String,
+              save: @escaping ([String], Bool) throws -> Void) {
+        if let window = windows[id] {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 480, height: 460),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        let view = TagEditorView(entry: entry, monitor: monitor) { [weak window] in window?.close() }
+        let view = TagEditorView(name: name, annotation: annotation, hint: hint, save: save) { [weak window] in window?.close() }
         window.contentView = NSHostingView(rootView: view)
-        window.title = L.editTags + " · " + entry.profile.displayName
+        window.title = L.editTags + " · " + name
         window.level = .floating
         window.isReleasedWhenClosed = false
         window.delegate = self
-        windows[entry.id] = window
+        windows[id] = window
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -123,27 +140,26 @@ final class TagEditorController: NSObject, NSWindowDelegate {
 }
 
 private struct TagEditorView: View {
-    let entry: QuotaMonitor.Entry
-    @ObservedObject var monitor: QuotaMonitor
+    let name: String
+    let hint: String
+    let saveAnnotations: ([String], Bool) throws -> Void
     let close: () -> Void
-    private let expectedKey: String
     @State private var tags: [DraftTag]
     @State private var newTag = ""
     @State private var unavailable: Bool
     @State private var error = ""
 
-    init(entry: QuotaMonitor.Entry, monitor: QuotaMonitor, close: @escaping () -> Void) {
-        self.entry = entry; self.monitor = monitor; self.close = close
-        expectedKey = monitor.annotationKey(for: entry)
-        let annotation = monitor.annotation(for: entry)
+    init(name: String, annotation: AccountAnnotation, hint: String,
+         save: @escaping ([String], Bool) throws -> Void, close: @escaping () -> Void) {
+        self.name = name; self.hint = hint; self.saveAnnotations = save; self.close = close
         _tags = State(initialValue: annotation.tags.map { DraftTag(text: $0) })
         _unavailable = State(initialValue: annotation.unavailable)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(entry.profile.displayName).font(.headline).textSelection(.enabled)
-            Text(L.tagHint).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Text(name).font(.headline).textSelection(.enabled)
+            Text(hint).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 TextField(L.tagPlaceholder, text: $newTag).onSubmit { addTag() }
                 Button(L.addTag) { addTag() }.disabled(tags.count >= 8)
@@ -194,7 +210,7 @@ private struct TagEditorView: View {
         let pending = newTag.trimmingCharacters(in: .whitespacesAndNewlines)
         if !pending.isEmpty { texts.append(pending) }
         do {
-            try monitor.saveAnnotations(entryId: entry.id, expectedKey: expectedKey, tags: texts, unavailable: unavailable)
+            try saveAnnotations(texts, unavailable)
             close()
         } catch { self.error = error.localizedDescription }
     }
