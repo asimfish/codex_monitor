@@ -82,7 +82,8 @@ struct AntigravityWidgetSection: View {
         let open = active || !collapsedAccounts.contains(account.id)
         return VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                accountTitle(account.name, status: status, unavailable: account.annotation?.unavailable == true)
+                accountTitle(account.name, status: status, stale: status.isStale,
+                             unavailable: account.annotation?.unavailable == true)
                 Spacer(minLength: 4)
                 if !open {
                     if let fraction = AntigravityQuota.tightestGeminiBucket(in: status.groups)?.fraction {
@@ -113,7 +114,7 @@ struct AntigravityWidgetSection: View {
                     statusNotice(model.submittingCode ? "正在核验授权…" : "请在 Antigravity 登录窗口提交授权码。",
                                  icon: "person.badge.key")
                 } else {
-                    details(status, waiting: hasToken && model.busy, signedIn: hasToken, isSystem: false)
+                    details(status, waiting: hasToken && model.busy, stale: status.isStale, signedIn: hasToken, isSystem: false)
                 }
                 HStack(spacing: 8) {
                     Button(signingIn ? "打开登录窗口" : (hasToken ? "重新登录" : "登录")) {
@@ -212,10 +213,10 @@ struct AntigravityWidgetSection: View {
     private func details(_ status: AntigravityAccountStatus, waiting: Bool, stale: Bool = false, signedIn: Bool, isSystem: Bool) -> some View {
         if let eligibility = status.eligibility {
             AntigravityVerificationNotice(eligibility: eligibility)
-        } else if let error = status.error {
-            statusNotice(error, icon: "exclamationmark.triangle.fill", color: .orange)
         } else if status.groups.isEmpty {
-            if waiting {
+            if let error = status.error {
+                statusNotice(error, icon: "exclamationmark.triangle.fill", color: .orange)
+            } else if waiting {
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
                     Text("正在读取额度…").font(.caption).foregroundStyle(.secondary)
@@ -249,6 +250,9 @@ struct AntigravityWidgetSection: View {
                 }
             }
             Text("来源 · Antigravity CLI").font(.system(size: 9)).foregroundStyle(.secondary)
+        }
+        if !status.groups.isEmpty, status.eligibility == nil, let error = status.error {
+            statusNotice(error, icon: "exclamationmark.triangle.fill", color: .orange)
         }
     }
 

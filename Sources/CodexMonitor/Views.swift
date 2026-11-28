@@ -105,11 +105,13 @@ struct CollapsedStripView: View {
                 isLoading: entry != nil && entry?.error == nil && window == nil
             ).help(window.map { "Codex · \($0.label)" } ?? "Codex")
             Divider()
+            let geminiStale = (antigravity.activeAccount == nil && antigravity.systemQuotaIsStale)
+                || (geminiStatus?.isStale == true)
             CompactQuotaMeter(
                 title: "Gemini", remaining: geminiRemaining, reset: gemini?.resetDate,
-                status: antigravity.activeAccount == nil && antigravity.systemQuotaIsStale
+                status: geminiStale
                     ? .yellow : geminiRemaining.map { quotaColor(remaining: $0) } ?? .gray,
-                hasIssue: geminiStatus?.error != nil || geminiStatus?.eligibility != nil,
+                hasIssue: geminiRemaining == nil && (geminiStatus?.error != nil || geminiStatus?.eligibility != nil),
                 isLoading: antigravity.busy && geminiStatus?.sync == nil
             ).help(gemini.map { "Gemini · \(geminiSource) · \($0.title)" } ?? "Gemini · \(geminiSource)")
             Button {

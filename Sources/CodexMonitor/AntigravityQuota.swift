@@ -27,7 +27,9 @@ struct AntigravityQuota: Decodable {
             remainingFraction.flatMap { (0...1).contains($0) ? $0 : nil }
         }
 
-        var reportedResetDate: Date? { resetTime.flatMap(ISO8601.parse) }
+        var reportedResetDate: Date? {
+            resetTime.flatMap(ISO8601.parse).flatMap { $0.timeIntervalSince1970 > 1 ? $0 : nil }
+        }
         var resetDate: Date? { reportedResetDate.flatMap { $0 > Date() ? $0 : nil } }
     }
 
@@ -128,6 +130,7 @@ enum AntigravityCLI {
 
     private static let isolationLock = NSLock()
     private static var verifiedBinary: Binary?
+    private static var cachedVersionBinary: Binary?
 
     enum Failure: String, Error {
         case missing = "安装官方 Antigravity CLI（agy）后即可同步额度。"
@@ -168,27 +171,62 @@ enum AntigravityCLI {
             !numbers.lexicographicallyPrecedes([1, 5, 16])
     }
 
+    private static func readVersion(_ command: URL, in directory: URL) throws -> String {
+        let path = command.resolvingSymlinksInPath()
+        let metadata = try? path.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        if let modified = metadata?.contentModificationDate, let size = metadata?.fileSize {
+            isolationLock.lock()
+            let cached = cachedVersionBinary
+            isolationLock.unlock()
+            if let cached, cached.path == path, cached.modified == modified, cached.size == size {
+                return cached.version
+            }
+        }
+        let version = try run(command, ["--version"], in: directory, timeout: 15)
+        let versionText = String(decoding: version.output, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard version.status == 0, !versionText.isEmpty else { throw Failure.version }
+        if let modified = metadata?.contentModificationDate, let size = metadata?.fileSize {
+            isolationLock.lock()
+            cachedVersionBinary = Binary(path: path, version: versionText, modified: modified, size: size)
+            isolationLock.unlock()
+        }
+        return versionText
+    }
+
     static func readQuota(profile: URL? = nil) throws -> AntigravityQuota {
         let command = try executable()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("codex-monitor-agy-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
                                                 attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: directory) }
-        let version = try run(command, ["--version"], in: directory)
-        let versionText = String(decoding: version.output, as: UTF8.self)
-        guard version.status == 0, supportsQuota(versionText) else {
+        let versionText = try readVersion(command, in: directory)
+        guard supportsQuota(versionText) else {
             throw Failure.version
         }
         if profile != nil {
             guard supportsProfiles(versionText) else { throw Failure.profilesUnsupported }
             try verifyIsolation(command, version: versionText, in: directory)
         }
-        var quota = try query(command, profile: profile, in: directory)
-        let arguments = profileArguments(profile) + ["-p", "/credits", "--output-format", "json", "--print-timeout", "6s"]
-        if let credits = try? run(command, arguments, in: directory, isolated: profile != nil, timeout: 9), credits.status == 0 {
-            quota.remainingCredits = AntigravityQuota.decodeCredits(credits.output)
+        var quota: AntigravityQuota?
+        var lastError: Error?
+        for attempt in 0..<2 {
+            do {
+                quota = try query(command, profile: profile, in: directory)
+                break
+            } catch Failure.failed {
+                lastError = Failure.failed
+                if attempt == 0 { Thread.sleep(forTimeInterval: 2.0) }
+            } catch {
+                throw error
+            }
         }
-        return quota
+        guard var resolvedQuota = quota else { throw lastError ?? Failure.failed }
+        let arguments = profileArguments(profile) + ["-p", "/credits", "--output-format", "json", "--print-timeout", "12s"]
+        if let credits = try? run(command, arguments, in: directory, isolated: profile != nil, timeout: 18), credits.status == 0 {
+            resolvedQuota.remainingCredits = AntigravityQuota.decodeCredits(credits.output)
+        }
+        return resolvedQuota
     }
 
     static func verifyIsolation() throws -> URL {
@@ -197,9 +235,8 @@ enum AntigravityCLI {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
                                                 attributes: [.posixPermissions: 0o700])
         defer { try? FileManager.default.removeItem(at: directory) }
-        let version = try run(command, ["--version"], in: directory)
-        let versionText = String(decoding: version.output, as: UTF8.self)
-        guard version.status == 0, supportsProfiles(versionText) else {
+        let versionText = try readVersion(command, in: directory)
+        guard supportsProfiles(versionText) else {
             throw Failure.profilesUnsupported
         }
         try verifyIsolation(command, version: versionText, in: directory)
@@ -239,8 +276,8 @@ enum AntigravityCLI {
     }
 
     private static func query(_ command: URL, profile: URL?, in directory: URL) throws -> AntigravityQuota {
-        let arguments = profileArguments(profile) + ["-p", "/usage", "--output-format", "json", "--print-timeout", "15s"]
-        let result = try run(command, arguments, in: directory, isolated: profile != nil)
+        let arguments = profileArguments(profile) + ["-p", "/usage", "--output-format", "json", "--print-timeout", "30s"]
+        let result = try run(command, arguments, in: directory, isolated: profile != nil, timeout: 40)
         if result.status != 0 {
             let output = String(decoding: result.output + result.diagnostics, as: UTF8.self)
             struct Reply: Decodable { let error: String }
@@ -268,7 +305,16 @@ enum AntigravityCLI {
                     ["https://developers.google.com/gemini-code-assist/auth/auth_success_gemini"] else { return nil }
             return parts.url
         }.first
-        return Eligibility(url: url)
+        if let url { return Eligibility(url: url) }
+        let lower = message.lowercased()
+        let transientMarkers = [
+            "context canceled", "deadline exceeded", "timeout", "timed out",
+            "no such host", "connection refused", "connection reset", "broken pipe",
+            "eof", "tls", "dial tcp", "temporary failure", "unavailable",
+            "502", "503", "504", "429", "print_timeout"
+        ]
+        if transientMarkers.contains(where: { lower.contains($0) }) { return nil }
+        return Eligibility(url: nil)
     }
 
     static func readIdentity(profile: AntigravityAccount? = nil) -> Identity? {
@@ -352,6 +398,10 @@ final class AntigravityModel: ObservableObject {
     static let shared = AntigravityModel()
     private static let activeAccountKey = "antigravityStripAccountID"
     private static let previousSystemEmailKey = "antigravityPreviousSystemEmail"
+    private static let staleRefreshNotice = "本次刷新失败，暂时显示上次同步的额度，稍后自动重试。"
+    private static let identityRefreshInterval: TimeInterval = 3600
+    private static let quickRetryDelayNanoseconds: UInt64 = 20_000_000_000
+    private static let maxQuickRetries = 2
     @Published private(set) var groups: [AntigravityQuota.Group] = []
     @Published private(set) var lastSync: Date?
     @Published private(set) var error: String?
@@ -380,6 +430,9 @@ final class AntigravityModel: ObservableObject {
     private var clipboardVersion = 0
     private var loginCancelled = false
     private var polling: Task<Void, Never>?
+    private var quickRetryTask: Task<Void, Never>?
+    private var quickRetryCount = 0
+    private var wakeObserver: NSObjectProtocol?
 
     var canChangeCredentials: Bool { !busy && signingIn.isEmpty && !DemoData.enabled }
     var usesAutomaticAccountOrder: Bool { accountOrder.automatic }
@@ -420,7 +473,8 @@ final class AntigravityModel: ObservableObject {
 
     var systemStatus: AntigravityAccountStatus {
         AntigravityAccountStatus(groups: groups, sync: lastSync, error: error, eligibility: systemEligibility,
-                                email: systemEmail, planTier: systemPlan, remainingCredits: systemCredits)
+                                email: systemEmail, planTier: systemPlan, remainingCredits: systemCredits,
+                                isStale: systemQuotaIsStale)
     }
 
     func selectActiveAccount(_ account: AntigravityAccount?) {
@@ -474,24 +528,38 @@ final class AntigravityModel: ObservableObject {
         }
         polling = Task { [weak self] in
             while !Task.isCancelled {
-                await self?.refresh()
+                await self?.refresh(automatic: true)
                 try? await Task.sleep(nanoseconds: 300_000_000_000)
+            }
+        }
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                await self?.refresh(automatic: true)
             }
         }
     }
 
-    func refresh() async {
+    func refresh(automatic: Bool = false) async {
         guard !busy, !DemoData.enabled else { return }
+        if !automatic {
+            quickRetryCount = 0
+            quickRetryTask?.cancel()
+            quickRetryTask = nil
+        }
         busy = true
         defer { busy = false }
         let activeID = activeAccount?.id
         if let active = activeAccount, !signingIn.contains(active.id) {
-            await refresh(active)
+            await refresh(active, forceIdentity: !automatic)
         }
         await readSystemAccount()
         for account in accounts where account.id != activeID && !signingIn.contains(account.id) {
-            await refresh(account)
+            await refresh(account, forceIdentity: !automatic)
         }
+        scheduleQuickRetryIfNeeded()
     }
 
     func refreshSystemAccount() async {
@@ -499,23 +567,75 @@ final class AntigravityModel: ObservableObject {
         busy = true
         defer { busy = false }
         await readSystemAccount()
+        scheduleQuickRetryIfNeeded()
+    }
+
+    private func needsQuickRetry(error: String?, eligibility: AntigravityCLI.Eligibility?, isStale: Bool) -> Bool {
+        guard eligibility == nil, let error else { return false }
+        return isStale || error == AntigravityCLI.Failure.failed.rawValue
+    }
+
+    private func scheduleQuickRetryIfNeeded() {
+        let systemFailed = needsQuickRetry(error: error, eligibility: systemEligibility, isStale: systemQuotaIsStale)
+        let savedFailed = accounts.contains { account in
+            guard account.hasToken, !signingIn.contains(account.id), let status = saved[account.id] else { return false }
+            return needsQuickRetry(error: status.error, eligibility: status.eligibility, isStale: status.isStale)
+        }
+        guard systemFailed || savedFailed else {
+            quickRetryCount = 0
+            quickRetryTask?.cancel()
+            quickRetryTask = nil
+            return
+        }
+        guard quickRetryCount < Self.maxQuickRetries else { return }
+        quickRetryCount += 1
+        quickRetryTask?.cancel()
+        quickRetryTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.quickRetryDelayNanoseconds)
+            guard !Task.isCancelled else { return }
+            await self?.retryFailedAccounts()
+        }
+    }
+
+    private func retryFailedAccounts() async {
+        guard !busy, !DemoData.enabled else { return }
+        busy = true
+        defer { busy = false }
+        if needsQuickRetry(error: error, eligibility: systemEligibility, isStale: systemQuotaIsStale) {
+            await readSystemAccount()
+        }
+        for account in accounts where account.hasToken && !signingIn.contains(account.id) {
+            if let status = saved[account.id],
+               needsQuickRetry(error: status.error, eligibility: status.eligibility, isStale: status.isStale) {
+                await refresh(account, forceIdentity: false)
+            }
+        }
+        scheduleQuickRetryIfNeeded()
     }
 
     private func readSystemAccount() async {
         let checkingSwitch = systemSwitch != nil
-        let identity = Task.detached(priority: .utility) { AntigravityCLI.readIdentity() }
-        // During a switch, begin the quota query after reading the new identity.
-        // Ordinary polling can fetch both in parallel.
-        let before = checkingSwitch ? await identity.value : nil
-        let quota = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.result
-        let account = await identity.value
-        if checkingSwitch, before?.email != nil {
-            let after = await Task.detached(priority: .utility) { AntigravityCLI.readIdentity() }.value
-            guard before?.email == after?.email else {
-                applySystemRefresh(.failure(AntigravityCLI.Failure.failed), email: after?.email, plan: after?.planTier)
-                return
+        if checkingSwitch {
+            let before = await Task.detached(priority: .utility) { AntigravityCLI.readIdentity() }.value
+            let quota = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.result
+            if before?.email != nil {
+                let after = await Task.detached(priority: .utility) { AntigravityCLI.readIdentity() }.value
+                guard before?.email == after?.email else {
+                    applySystemRefresh(.failure(AntigravityCLI.Failure.failed), email: after?.email, plan: after?.planTier)
+                    return
+                }
             }
+            applySystemRefresh(quota, email: before?.email, plan: before?.planTier)
+            return
         }
+        // Run quota and identity sequentially to avoid contending on ~/.gemini.
+        let quota = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota() }.result
+        if case .failure(let failure) = quota, let cliFailure = failure as? AntigravityCLI.Failure,
+           cliFailure != .failed {
+            applySystemRefresh(quota, email: nil, plan: nil)
+            return
+        }
+        let account = await Task.detached(priority: .utility) { AntigravityCLI.readIdentity() }.value
         applySystemRefresh(quota, email: account?.email, plan: account?.planTier)
     }
 
@@ -538,7 +658,11 @@ final class AntigravityModel: ObservableObject {
         switch result {
         case .success(let quota):
             groups = quota.groups.filter { !$0.buckets.isEmpty }
-            systemCredits = quota.remainingCredits
+            if let credits = quota.remainingCredits {
+                systemCredits = credits
+            } else if email == nil || systemQuotaEmail?.caseInsensitiveCompare(email ?? "") != .orderedSame {
+                systemCredits = nil
+            }
             lastSync = Date()
             systemQuotaEmail = email
             error = nil
@@ -547,11 +671,16 @@ final class AntigravityModel: ObservableObject {
         case .failure(let failure):
             let quotaFailure = failure as? AntigravityCLI.Failure ?? .failed
             systemEligibility = failure as? AntigravityCLI.Eligibility
-            error = systemEligibility == nil ? quotaFailure.rawValue : nil
-            // A temporary error can reuse a snapshot only after confirming its account.
+            let sameOrUnknownEmail = email == nil
+                || systemQuotaEmail == nil
+                || email?.caseInsensitiveCompare(systemQuotaEmail ?? "") == .orderedSame
+            // Preserve the last snapshot during transient network/CLI hiccups when not switching accounts.
             systemQuotaIsStale = systemEligibility == nil && quotaFailure == .failed
-                && email != nil && email == systemQuotaEmail && lastSync != nil
-            if !systemQuotaIsStale {
+                && systemSwitch == nil && !groups.isEmpty && lastSync != nil && sameOrUnknownEmail
+            if systemQuotaIsStale {
+                error = Self.staleRefreshNotice
+            } else {
+                error = systemEligibility == nil ? quotaFailure.rawValue : nil
                 groups = []
                 systemCredits = nil
                 lastSync = nil
@@ -573,41 +702,98 @@ final class AntigravityModel: ObservableObject {
         }
     }
 
-    private func refresh(_ account: AntigravityAccount) async {
-        guard account.hasToken else {
-            saved[account.id] = nil
-            return
+    func applySavedRefresh(for accountID: UUID, result: Result<AntigravityQuota, Error>,
+                           tokenSignature: String, identity: AntigravityCLI.Identity?,
+                           checkedIdentity: Bool, now: Date = Date()) {
+        let previous = saved[accountID]
+        let sameToken = previous?.tokenSignature == tokenSignature
+        let email: String?
+        let planTier: String?
+        let identitySync: Date?
+        if checkedIdentity {
+            let reportedEmail = identity?.email
+            let reportedPlan = identity?.planTier?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let reportedEmail {
+                email = reportedEmail
+                let sameEmail = previous?.email?.caseInsensitiveCompare(reportedEmail) == .orderedSame
+                planTier = (reportedPlan?.isEmpty == false ? reportedPlan : nil)
+                    ?? (sameToken && sameEmail ? previous?.planTier : nil)
+                identitySync = now
+            } else if sameToken {
+                email = previous?.email
+                planTier = previous?.planTier
+                identitySync = previous?.identitySync
+            } else {
+                email = nil
+                planTier = nil
+                identitySync = nil
+            }
+        } else {
+            email = sameToken ? previous?.email : nil
+            planTier = sameToken ? previous?.planTier : nil
+            identitySync = sameToken ? previous?.identitySync : nil
         }
-        let identity = Task.detached(priority: .utility) { AntigravityCLI.readIdentity(profile: account) }
-        let result = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota(profile: account.directory) }.result
-        let identityResult = await identity.value
-        let previous = saved[account.id]
-        let email = identityResult?.email
-        let reportedPlan = identityResult?.planTier?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let preservedPlan = (email != nil && previous?.email?.caseInsensitiveCompare(email!) == .orderedSame)
-            ? previous?.planTier : nil
-        let planTier = (reportedPlan?.isEmpty == false ? reportedPlan : nil) ?? preservedPlan
-        var status = AntigravityAccountStatus(email: email, planTier: planTier)
+
+        var status = AntigravityAccountStatus(email: email, planTier: planTier,
+                                              tokenSignature: tokenSignature, identitySync: identitySync)
         switch result {
         case .success(let quota):
             status.groups = quota.groups.filter { !$0.buckets.isEmpty }
-            status.sync = Date()
-            status.remainingCredits = quota.remainingCredits
+            status.sync = now
+            status.remainingCredits = quota.remainingCredits ?? (sameToken ? previous?.remainingCredits : nil)
+            status.isStale = false
         case .failure(let failure):
             if let eligibility = failure as? AntigravityCLI.Eligibility {
                 status.eligibility = eligibility
             } else {
-                status.error = (failure as? AntigravityCLI.Failure ?? .failed).rawValue
+                let quotaFailure = failure as? AntigravityCLI.Failure ?? .failed
+                if quotaFailure == .failed && sameToken, let prev = previous, !prev.groups.isEmpty, prev.sync != nil {
+                    status.groups = prev.groups
+                    status.sync = prev.sync
+                    status.remainingCredits = prev.remainingCredits
+                    status.isStale = true
+                    status.error = Self.staleRefreshNotice
+                } else {
+                    status.error = quotaFailure.rawValue
+                }
             }
         }
-        saved[account.id] = status
+        saved[accountID] = status
+    }
+
+    private func refresh(_ account: AntigravityAccount, forceIdentity: Bool = false) async {
+        guard let tokenSig = account.tokenSignature else {
+            saved[account.id] = nil
+            return
+        }
+        let previous = saved[account.id]
+        let sameToken = previous?.tokenSignature == tokenSig
+        let result = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota(profile: account.directory) }.result
+        let skipIdentityForHardFailure: Bool
+        if case .failure(let failure) = result, let cliFailure = failure as? AntigravityCLI.Failure, cliFailure != .failed {
+            skipIdentityForHardFailure = true
+        } else {
+            skipIdentityForHardFailure = false
+        }
+        let identityExpired = previous?.identitySync.map { Date().timeIntervalSince($0) >= Self.identityRefreshInterval } ?? true
+        let needsIdentity = !skipIdentityForHardFailure
+            && (forceIdentity || !sameToken || previous?.email == nil || previous?.planTier == nil || identityExpired)
+        let identityResult: AntigravityCLI.Identity?
+        if needsIdentity {
+            identityResult = await Task.detached(priority: .utility) { AntigravityCLI.readIdentity(profile: account) }.value
+        } else {
+            identityResult = nil
+        }
+        applySavedRefresh(for: account.id, result: result, tokenSignature: tokenSig,
+                          identity: identityResult, checkedIdentity: needsIdentity)
     }
 
     func refreshSavedAccount(_ account: AntigravityAccount) async {
         guard !busy, !signingIn.contains(account.id), !DemoData.enabled else { return }
         busy = true
         defer { busy = false }
-        await refresh(account)
+        await refresh(account, forceIdentity: true)
+        scheduleQuickRetryIfNeeded()
     }
 
     private func validName(_ name: String, excluding id: UUID? = nil) -> Bool {
@@ -732,7 +918,7 @@ final class AntigravityModel: ObservableObject {
                 saved[account.id, default: AntigravityAccountStatus()].error = failure
                 loginResult = .failed(failure)
             } else {
-                await refresh(account)
+                await refresh(account, forceIdentity: true)
                 if let eligibility = saved[account.id]?.eligibility {
                     loginResult = .verification(eligibility)
                 } else {

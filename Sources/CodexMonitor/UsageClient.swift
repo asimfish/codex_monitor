@@ -36,7 +36,7 @@ struct UsageClient {
         self.baseURL = baseURL
         let cfg = URLSessionConfiguration.ephemeral
         cfg.timeoutIntervalForRequest = 20
-        cfg.timeoutIntervalForResource = 30
+        cfg.timeoutIntervalForResource = 35
         cfg.waitsForConnectivity = false
         cfg.httpAdditionalHeaders = [
             "User-Agent": "codex_cli_rs/0.153.3 (Mac OS; arm64) CodexMonitor/1.0",
@@ -54,6 +54,18 @@ struct UsageClient {
         try await get("wham/rate-limit-reset-credits", accessToken: accessToken, accountId: accountId)
     }
 
+    private static func isTransient(_ error: Error) -> Bool {
+        guard let usageError = error as? UsageError else { return false }
+        switch usageError {
+        case .network:
+            return true
+        case .http(let code, _):
+            return code == 502 || code == 503 || code == 504
+        case .noToken, .unauthorized, .decode:
+            return false
+        }
+    }
+
     private func get<T: Decodable>(_ path: String, accessToken: String, accountId: String?) async throws -> T {
         var req = URLRequest(url: baseURL.appendingPathComponent(path))
         req.httpMethod = "GET"
@@ -61,13 +73,23 @@ struct UsageClient {
         if let acct = accountId, !acct.isEmpty {
             req.setValue(acct, forHTTPHeaderField: "ChatGPT-Account-Id")
         }
-        let (data, response) = try await perform(req)
-        try Self.check(response, data: data)
-        do {
-            return try JSONDecoder().decode(T.self, from: data)
-        } catch {
-            throw UsageError.decode("\(error)")
+        var lastError: Error?
+        for attempt in 0..<2 {
+            do {
+                let (data, response) = try await perform(req)
+                try Self.check(response, data: data)
+                do {
+                    return try JSONDecoder().decode(T.self, from: data)
+                } catch {
+                    throw UsageError.decode("\(error)")
+                }
+            } catch {
+                lastError = error
+                guard attempt == 0, Self.isTransient(error) else { throw error }
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+            }
         }
+        throw lastError!
     }
 
     /// Exchanges a refresh token for a new token set. This rotates the refresh token server-side,

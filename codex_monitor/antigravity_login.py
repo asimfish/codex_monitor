@@ -226,73 +226,85 @@ def read_identity(executable, profile_id=None):
     profile = _profile_directory(profile_id) if profile_id is not None else None
     if profile is not None and not _valid_token_file(profile / _DATA_DIR / _TOKEN_NAME):
         return None
-    with tempfile.TemporaryDirectory(prefix="codex-monitor-agy-identity-") as tmp:
-        work = Path(tmp)
-        hook = work / "status.py"
-        capture = work / "identity"
-        # Request only documented account fields (email, plan_tier) plus a
-        # readiness flag. Workspace and conversation metadata are discarded.
-        hook.write_text(
-            "import json, os, sys\n"
-            "state = json.load(sys.stdin)\n"
-            "email = state.get('email')\n"
-            "tier = state.get('plan_tier')\n"
-            "ready = bool(state.get('cycle_mode'))\n"
-            "if state.get('product') == 'antigravity' and isinstance(email, str):\n"
-            "    path = " + repr(str(capture)) + "\n"
-            "    part = path + '.' + str(os.getpid())\n"
-            "    with open(part, 'w') as out:\n"
-            "        json.dump({'email': email, 'plan_tier': tier, 'ready': ready}, out)\n"
-            "    os.replace(part, path)\n", encoding="utf-8")
-        command = shlex.join([sys.executable, str(hook)])
-        settings = json.dumps({"statusLine": {"type": "command", "command": command, "enabled": True}})
-        args = [executable, "--settings", settings]
-        env = _terminal_environment(work)
-        if profile is not None:
-            args += ["--gemini_dir", str(profile), "--app_data_dir", _DATA_DIR]
-            env["AGY_CLI_FORCE_FILE_TOKEN_STORAGE"] = "1"
-        found_email = None
-        found_tier = None
-        email_seen_at = None
-        ready_seen_at = None
-        with _terminal(args, work, env) as (child, master):
-            deadline = time.monotonic() + _IDENTITY_TIMEOUT
-            while time.monotonic() < deadline:
-                # Startup can briefly show a sign-in prompt while loading the
-                # system keychain, and plan_tier arrives a few seconds after
-                # email once account onboarding metadata finishes loading.
-                _read_terminal(master, .25)
-                email, tier, ready = _read_capture(capture)
-                now = time.monotonic()
-                if email is not None:
-                    if email != found_email:
-                        found_email = email
-                        found_tier = None
-                        email_seen_at = now
-                        ready_seen_at = None
-                    if tier is not None:
-                        found_tier = tier
-                    if found_tier is not None:
-                        return {"email": found_email, "plan_tier": found_tier}
-                    if ready and ready_seen_at is None:
-                        ready_seen_at = now
-                if found_email is not None:
-                    if (ready_seen_at is not None and now - ready_seen_at >= _PLAN_TIER_READY_GRACE) or (
-                        email_seen_at is not None and now - email_seen_at >= _PLAN_TIER_WAIT
-                    ):
-                        return {"email": found_email, "plan_tier": found_tier}
-                if child.poll() is not None:
-                    break
-        email, tier, _ = _read_capture(capture)
-        if email is not None:
-            if email != found_email:
-                found_email = email
-                found_tier = tier
-            elif tier is not None:
-                found_tier = tier
-        if found_email is not None:
-            return {"email": found_email, "plan_tier": found_tier}
-    return None
+    parent = os.getppid()
+    previous_sigterm = None
+    if hasattr(signal, "SIGTERM"):
+        def _handle_sigterm(_signum, _frame):
+            raise LoginError("身份核对已取消。")
+        previous_sigterm = signal.signal(signal.SIGTERM, _handle_sigterm)
+    try:
+        with tempfile.TemporaryDirectory(prefix="codex-monitor-agy-identity-") as tmp:
+            work = Path(tmp)
+            hook = work / "status.py"
+            capture = work / "identity"
+            # Request only documented account fields (email, plan_tier) plus a
+            # readiness flag. Workspace and conversation metadata are discarded.
+            hook.write_text(
+                "import json, os, sys\n"
+                "state = json.load(sys.stdin)\n"
+                "email = state.get('email')\n"
+                "tier = state.get('plan_tier')\n"
+                "ready = bool(state.get('cycle_mode'))\n"
+                "if state.get('product') == 'antigravity' and isinstance(email, str):\n"
+                "    path = " + repr(str(capture)) + "\n"
+                "    part = path + '.' + str(os.getpid())\n"
+                "    with open(part, 'w') as out:\n"
+                "        json.dump({'email': email, 'plan_tier': tier, 'ready': ready}, out)\n"
+                "    os.replace(part, path)\n", encoding="utf-8")
+            command = shlex.join([sys.executable, str(hook)])
+            settings = json.dumps({"statusLine": {"type": "command", "command": command, "enabled": True}})
+            args = [executable, "--settings", settings]
+            env = _terminal_environment(work)
+            if profile is not None:
+                args += ["--gemini_dir", str(profile), "--app_data_dir", _DATA_DIR]
+                env["AGY_CLI_FORCE_FILE_TOKEN_STORAGE"] = "1"
+            found_email = None
+            found_tier = None
+            email_seen_at = None
+            ready_seen_at = None
+            with _terminal(args, work, env) as (child, master):
+                deadline = time.monotonic() + _IDENTITY_TIMEOUT
+                while time.monotonic() < deadline:
+                    if os.getppid() != parent:
+                        return None
+                    # Startup can briefly show a sign-in prompt while loading the
+                    # system keychain, and plan_tier arrives a few seconds after
+                    # email once account onboarding metadata finishes loading.
+                    _read_terminal(master, .25)
+                    email, tier, ready = _read_capture(capture)
+                    now = time.monotonic()
+                    if email is not None:
+                        if email != found_email:
+                            found_email = email
+                            found_tier = None
+                            email_seen_at = now
+                            ready_seen_at = None
+                        if tier is not None:
+                            found_tier = tier
+                        if found_tier is not None:
+                            return {"email": found_email, "plan_tier": found_tier}
+                        if ready and ready_seen_at is None:
+                            ready_seen_at = now
+                    if found_email is not None:
+                        if (ready_seen_at is not None and now - ready_seen_at >= _PLAN_TIER_READY_GRACE) or (
+                            email_seen_at is not None and now - email_seen_at >= _PLAN_TIER_WAIT
+                        ):
+                            return {"email": found_email, "plan_tier": found_tier}
+                    if child.poll() is not None:
+                        break
+            email, tier, _ = _read_capture(capture)
+            if email is not None:
+                if email != found_email:
+                    found_email = email
+                    found_tier = tier
+                elif tier is not None:
+                    found_tier = tier
+            if found_email is not None:
+                return {"email": found_email, "plan_tier": found_tier}
+        return None
+    finally:
+        if previous_sigterm is not None:
+            signal.signal(signal.SIGTERM, previous_sigterm)
 
 
 def run(profile_id, executable):

@@ -159,6 +159,53 @@ class AntigravityLoginTests(unittest.TestCase):
             self.assertEqual(result, {"email": "free@example.com", "plan_tier": None})
             self.assertLess(elapsed, 1.0)
 
+    def test_read_identity_terminates_child_process_group_on_sigterm(self):
+        import os
+        import signal
+
+        with tempfile.TemporaryDirectory() as directory:
+            child_pid_file = Path(directory) / "child.pid"
+            fake_agy = Path(directory) / "agy"
+            fake_agy.write_text(
+                f"#!{sys.executable}\n"
+                "import os, time\n"
+                f"open({str(child_pid_file)!r}, 'w').write(str(os.getpid()))\n"
+                "time.sleep(30)\n",
+                encoding="utf-8",
+            )
+            fake_agy.chmod(0o700)
+            script = (
+                f"import sys; sys.path.insert(0, {str(Path(__file__).resolve().parents[1])!r}); "
+                "from unittest.mock import patch; "
+                "from codex_monitor import antigravity_login; "
+                "patch.object(antigravity_login, '_check_executable', lambda _c: None).start(); "
+                f"antigravity_login.read_identity({str(fake_agy)!r})"
+            )
+            proc = subprocess.Popen([sys.executable, "-c", script],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                deadline = time.monotonic() + 5.0
+                while not child_pid_file.is_file() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(child_pid_file.is_file(), "fake agy child never started")
+                child_pid = int(child_pid_file.read_text(encoding="utf-8").strip())
+                proc.terminate()
+                proc.wait(timeout=5)
+                deadline = time.monotonic() + 3.0
+                alive = True
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(child_pid, 0)
+                        time.sleep(0.05)
+                    except ProcessLookupError:
+                        alive = False
+                        break
+                self.assertFalse(alive, "child agy process was leaked after SIGTERM")
+            finally:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait()
+
 
 if __name__ == "__main__":
     unittest.main()

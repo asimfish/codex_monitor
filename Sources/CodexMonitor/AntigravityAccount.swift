@@ -35,6 +35,14 @@ struct AntigravityAccount: Codable, Identifiable {
         (try? withToken { _, _ in true }) ?? false
     }
 
+    var tokenSignature: String? {
+        try? withToken { _, fd in
+            var info = stat()
+            guard fstat(fd, &info) == 0 else { throw Self.fileError() }
+            return "\(info.st_mtimespec.tv_sec).\(info.st_mtimespec.tv_nsec):\(info.st_size):\(info.st_ino)"
+        }
+    }
+
     func readCredential() throws -> Data {
         try withToken { _, fd in
             let file = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
@@ -116,4 +124,7 @@ struct AntigravityAccountStatus {
     var email: String?
     var planTier: String?
     var remainingCredits: Int?
+    var isStale = false
+    var tokenSignature: String?
+    var identitySync: Date?
 }
