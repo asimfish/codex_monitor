@@ -372,8 +372,9 @@ If you already signed in to `agy`, the widget can use that session immediately.
 
 The refresh button reads the [official model quota command](https://antigravity.google/docs/cli/commands/usage).
 Cards show remaining and used percentages, reported reset times and countdowns
-by model group, plus the plan when reported, AI Credits balance, and last
-successful sync. Saved cards can collapse to one-line summaries. It refreshes every five minutes
+by model group, plus the account type (plan tier badge and full tier name when
+reported), login type (system login or independent profile), AI Credits balance,
+and last successful sync. Saved cards can collapse to one-line summaries. It refreshes every five minutes
 while running. After switching accounts in the official app, click refresh to
 see the active account's quotas. Google manages the login in its own client.
 
