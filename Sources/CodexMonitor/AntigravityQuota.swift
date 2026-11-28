@@ -65,6 +65,27 @@ struct AntigravityQuota: Decodable {
             .min { $0.1 < $1.1 }?.0
     }
 
+    static func planBadgeLabel(for plan: String) -> String {
+        let trimmed = plan.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let lower = trimmed.lowercased()
+        if lower == "free" || lower == "antigravity free" || lower == "free tier" { return "Free" }
+        if lower == "pro" || lower == "google ai pro" || lower == "antigravity pro" { return "Pro" }
+        if lower == "plus" || lower == "google ai plus" { return "Plus" }
+        if lower == "ultra" || lower == "google ai ultra" { return "Ultra" }
+        if lower == "standard" || lower == "gemini code assist standard" || lower == "standard tier" { return "Standard" }
+        if lower == "enterprise" || lower == "gemini enterprise"
+            || lower == "gemini code assist enterprise"
+            || lower.hasPrefix("gemini enterprise ") { return "Enterprise" }
+        for prefix in ["Google AI ", "Antigravity ", "Gemini Code Assist "] {
+            if lower.hasPrefix(prefix.lowercased()) {
+                let suffix = String(trimmed.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+                if !suffix.isEmpty { return suffix }
+            }
+        }
+        return trimmed
+    }
+
     private struct Reply: Decodable {
         struct Command: Decodable {
             let name: String
@@ -341,6 +362,7 @@ final class AntigravityModel: ObservableObject {
     @Published private(set) var systemEligibility: AntigravityCLI.Eligibility?
     @Published private(set) var systemQuotaIsStale = false
     private var systemQuotaEmail: String?
+    private var systemPlanEmail: String?
     @Published private(set) var busy = false
     @Published private(set) var accounts = AntigravityAccount.load()
     @Published private(set) var saved: [UUID: AntigravityAccountStatus] = [:]
@@ -445,7 +467,7 @@ final class AntigravityModel: ObservableObject {
         if DemoData.enabled {
             groups = DemoData.antigravityGroups()
             systemEmail = "gemini@example.com"
-            systemPlan = "Pro"
+            systemPlan = "Google AI Pro"
             systemCredits = 120
             lastSync = Date()
             return
@@ -462,8 +484,12 @@ final class AntigravityModel: ObservableObject {
         guard !busy, !DemoData.enabled else { return }
         busy = true
         defer { busy = false }
+        let activeID = activeAccount?.id
+        if let active = activeAccount, !signingIn.contains(active.id) {
+            await refresh(active)
+        }
         await readSystemAccount()
-        for account in accounts where !signingIn.contains(account.id) {
+        for account in accounts where account.id != activeID && !signingIn.contains(account.id) {
             await refresh(account)
         }
     }
@@ -495,7 +521,16 @@ final class AntigravityModel: ObservableObject {
 
     func applySystemRefresh(_ result: Result<AntigravityQuota, Error>, email: String?, plan: String? = nil) {
         systemEmail = email
-        systemPlan = plan
+        let normalizedPlan = plan?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let normalizedPlan, !normalizedPlan.isEmpty {
+            systemPlan = normalizedPlan
+            systemPlanEmail = email
+        } else if let email, systemPlanEmail?.caseInsensitiveCompare(email) == .orderedSame {
+            // Keep the last confirmed tier for the same verified system account.
+        } else {
+            systemPlan = nil
+            systemPlanEmail = nil
+        }
         if let email, email != previousSystemEmail {
             previousSystemEmail = email
             UserDefaults.standard.set(email, forKey: Self.previousSystemEmailKey)
@@ -546,7 +581,13 @@ final class AntigravityModel: ObservableObject {
         let identity = Task.detached(priority: .utility) { AntigravityCLI.readIdentity(profile: account) }
         let result = await Task.detached(priority: .utility) { try AntigravityCLI.readQuota(profile: account.directory) }.result
         let identityResult = await identity.value
-        var status = AntigravityAccountStatus(email: identityResult?.email, planTier: identityResult?.planTier)
+        let previous = saved[account.id]
+        let email = identityResult?.email
+        let reportedPlan = identityResult?.planTier?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let preservedPlan = (email != nil && previous?.email?.caseInsensitiveCompare(email!) == .orderedSame)
+            ? previous?.planTier : nil
+        let planTier = (reportedPlan?.isEmpty == false ? reportedPlan : nil) ?? preservedPlan
+        var status = AntigravityAccountStatus(email: email, planTier: planTier)
         switch result {
         case .success(let quota):
             status.groups = quota.groups.filter { !$0.buckets.isEmpty }

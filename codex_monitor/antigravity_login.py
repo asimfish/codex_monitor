@@ -26,6 +26,10 @@ class LoginError(Exception):
 _TOKEN_NAME = "antigravity-oauth-token"
 _DATA_DIR = "antigravity-cli"
 _TOKEN_LIMIT = 64 * 1024
+_PLAN_TIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._+/()-]{0,47}")
+_IDENTITY_TIMEOUT = 18.0
+_PLAN_TIER_WAIT = 12.0
+_PLAN_TIER_READY_GRACE = 2.5
 
 
 def _environment():
@@ -195,6 +199,28 @@ def _valid_token_file(token):
             and info.st_nlink == 1 and 0 < info.st_size <= _TOKEN_LIMIT)
 
 
+def _valid_plan_tier(tier):
+    if not isinstance(tier, str):
+        return None
+    cleaned = tier.strip()
+    return cleaned if _PLAN_TIER_RE.fullmatch(cleaned) else None
+
+
+def _read_capture(capture):
+    if not capture.is_file():
+        return None, None, False
+    try:
+        state = json.loads(capture.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None, None, False
+    if not isinstance(state, dict):
+        return None, None, False
+    email = state.get("email")
+    if not isinstance(email, str) or not re.fullmatch(r"[^\s@]{1,100}@[^\s@]{1,150}", email):
+        return None, None, False
+    return email, _valid_plan_tier(state.get("plan_tier")), bool(state.get("ready"))
+
+
 def read_identity(executable, profile_id=None):
     _check_executable(executable)
     profile = _profile_directory(profile_id) if profile_id is not None else None
@@ -204,18 +230,19 @@ def read_identity(executable, profile_id=None):
         work = Path(tmp)
         hook = work / "status.py"
         capture = work / "identity"
-        # Request only the documented email field. The hook's input can also
-        # contain workspace and conversation metadata, which is discarded.
+        # Request only documented account fields (email, plan_tier) plus a
+        # readiness flag. Workspace and conversation metadata are discarded.
         hook.write_text(
             "import json, os, sys\n"
             "state = json.load(sys.stdin)\n"
             "email = state.get('email')\n"
             "tier = state.get('plan_tier')\n"
+            "ready = bool(state.get('cycle_mode'))\n"
             "if state.get('product') == 'antigravity' and isinstance(email, str):\n"
             "    path = " + repr(str(capture)) + "\n"
             "    part = path + '.' + str(os.getpid())\n"
             "    with open(part, 'w') as out:\n"
-            "        json.dump({'email': email, 'plan_tier': tier}, out)\n"
+            "        json.dump({'email': email, 'plan_tier': tier, 'ready': ready}, out)\n"
             "    os.replace(part, path)\n", encoding="utf-8")
         command = shlex.join([sys.executable, str(hook)])
         settings = json.dumps({"statusLine": {"type": "command", "command": command, "enabled": True}})
@@ -224,22 +251,47 @@ def read_identity(executable, profile_id=None):
         if profile is not None:
             args += ["--gemini_dir", str(profile), "--app_data_dir", _DATA_DIR]
             env["AGY_CLI_FORCE_FILE_TOKEN_STORAGE"] = "1"
+        found_email = None
+        found_tier = None
+        email_seen_at = None
+        ready_seen_at = None
         with _terminal(args, work, env) as (child, master):
-            deadline = time.monotonic() + 15
+            deadline = time.monotonic() + _IDENTITY_TIMEOUT
             while time.monotonic() < deadline:
                 # Startup can briefly show a sign-in prompt while loading the
-                # system keychain. Wait for the authoritative status payload.
+                # system keychain, and plan_tier arrives a few seconds after
+                # email once account onboarding metadata finishes loading.
                 _read_terminal(master, .25)
-                if capture.is_file():
-                    state = json.loads(capture.read_text(encoding="utf-8"))
-                    email = state.get("email")
-                    if isinstance(email, str) and re.fullmatch(r"[^\s@]{1,100}@[^\s@]{1,150}", email):
-                        tier = state.get("plan_tier")
-                        if not isinstance(tier, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 ._+-]{0,29}", tier):
-                            tier = None
-                        return {"email": email, "plan_tier": tier}
+                email, tier, ready = _read_capture(capture)
+                now = time.monotonic()
+                if email is not None:
+                    if email != found_email:
+                        found_email = email
+                        found_tier = None
+                        email_seen_at = now
+                        ready_seen_at = None
+                    if tier is not None:
+                        found_tier = tier
+                    if found_tier is not None:
+                        return {"email": found_email, "plan_tier": found_tier}
+                    if ready and ready_seen_at is None:
+                        ready_seen_at = now
+                if found_email is not None:
+                    if (ready_seen_at is not None and now - ready_seen_at >= _PLAN_TIER_READY_GRACE) or (
+                        email_seen_at is not None and now - email_seen_at >= _PLAN_TIER_WAIT
+                    ):
+                        return {"email": found_email, "plan_tier": found_tier}
                 if child.poll() is not None:
                     break
+        email, tier, _ = _read_capture(capture)
+        if email is not None:
+            if email != found_email:
+                found_email = email
+                found_tier = tier
+            elif tier is not None:
+                found_tier = tier
+        if found_email is not None:
+            return {"email": found_email, "plan_tier": found_tier}
     return None
 
 

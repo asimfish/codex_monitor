@@ -67,7 +67,7 @@ struct AntigravityWidgetSection: View {
                     Text("上次识别：\(email)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                         .truncationMode(.middle).help(email)
                 }
-                details(status, waiting: model.busy, stale: model.systemQuotaIsStale, signedIn: status.email != nil)
+                details(status, waiting: model.busy, stale: model.systemQuotaIsStale, signedIn: status.email != nil, isSystem: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -113,7 +113,7 @@ struct AntigravityWidgetSection: View {
                     statusNotice(model.submittingCode ? "正在核验授权…" : "请在 Antigravity 登录窗口提交授权码。",
                                  icon: "person.badge.key")
                 } else {
-                    details(status, waiting: hasToken && model.busy, signedIn: hasToken)
+                    details(status, waiting: hasToken && model.busy, signedIn: hasToken, isSystem: false)
                 }
                 HStack(spacing: 8) {
                     Button(signingIn ? "打开登录窗口" : (hasToken ? "重新登录" : "登录")) {
@@ -186,7 +186,15 @@ struct AntigravityWidgetSection: View {
                 .accessibilityHidden(true)
             Text(title).font(.system(size: 13, weight: .semibold))
                 .lineLimit(1).truncationMode(.middle).help(title)
-            if let plan = status.planTier { PlanBadge(text: plan, small: true).lineLimit(1) }
+            if let plan = status.planTier {
+                let badge = AntigravityQuota.planBadgeLabel(for: plan)
+                if !badge.isEmpty {
+                    PlanBadge(text: badge, small: true)
+                        .lineLimit(1).truncationMode(.tail)
+                        .fixedSize(horizontal: badge.count <= 12, vertical: true)
+                        .help(plan)
+                }
+            }
         }
     }
 
@@ -201,7 +209,7 @@ struct AntigravityWidgetSection: View {
     }
 
     @ViewBuilder
-    private func details(_ status: AntigravityAccountStatus, waiting: Bool, stale: Bool = false, signedIn: Bool) -> some View {
+    private func details(_ status: AntigravityAccountStatus, waiting: Bool, stale: Bool = false, signedIn: Bool, isSystem: Bool) -> some View {
         if let eligibility = status.eligibility {
             AntigravityVerificationNotice(eligibility: eligibility)
         } else if let error = status.error {
@@ -228,10 +236,17 @@ struct AntigravityWidgetSection: View {
         }
         if let sync = status.sync {
             Divider()
-            HStack(alignment: .top, spacing: 8) {
-                infoCell("AI Credits 余额", status.remainingCredits?.formatted() ?? L.dash)
-                    .help("官方 Antigravity /credits 返回的剩余点数")
-                infoCell(stale ? "上次同步（缓存）" : "额度更新时间", Fmt.fullDateTime.string(from: sync))
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .top, spacing: 8) {
+                    infoCell("账号类型", status.planTier ?? L.dash)
+                        .help("官方 Antigravity CLI 返回的套餐等级")
+                    infoCell("AI Credits 余额", status.remainingCredits?.formatted() ?? L.dash)
+                        .help("官方 Antigravity /credits 返回的剩余点数")
+                }
+                HStack(alignment: .top, spacing: 8) {
+                    infoCell(stale ? "上次同步（缓存）" : "额度更新时间", Fmt.fullDateTime.string(from: sync))
+                    infoCell("登录方式", isSystem ? "系统登录" : "独立账号")
+                }
             }
             Text("来源 · Antigravity CLI").font(.system(size: 9)).foregroundStyle(.secondary)
         }
