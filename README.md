@@ -375,7 +375,9 @@ Cards show remaining and used percentages, reported reset times and countdowns
 by model group, plus the account type (plan tier badge and full tier name when
 reported), login type (system login or independent profile), AI Credits balance,
 and last successful sync. Saved cards can collapse to one-line summaries. It refreshes every five minutes
-while running. After switching accounts in the official app, click refresh to
+while running and automatically refreshes after waking from sleep. Transient CLI or network
+hiccups are retried automatically while retaining the last valid quota snapshot until recovery.
+After switching accounts in the official app, click refresh to
 see the active account's quotas. Google manages the login in its own client.
 
 To track another Google account, expand **Antigravity**, click **添加账号**,
